@@ -207,6 +207,17 @@ export function adaptDocument(document) {
   };
 }
 
+export function adaptAuditEvent(event) {
+  return {
+    id: event.id,
+    actor: event.actor ?? "system",
+    action: event.action ?? "updated record",
+    targetType: event.target_type ?? "record",
+    targetId: event.target_id ?? "",
+    createdAt: event.created_at ?? "",
+  };
+}
+
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, options);
   if (!response.ok) {
@@ -229,16 +240,18 @@ function fileFormData(files) {
 }
 
 export async function fetchDashboardData() {
-  const [templates, registrations, documents] = await Promise.all([
+  const [templates, registrations, documents, auditEvents] = await Promise.all([
     request("/api/templates"),
     request("/api/template-registrations"),
     request("/api/documents"),
+    request("/api/audit-events"),
   ]);
 
   return {
     templates: templates.map(adaptTemplate),
     registrations: registrations.map(adaptRegistration),
     documents: documents.map(adaptDocument),
+    auditEvents: auditEvents.map(adaptAuditEvent).reverse(),
   };
 }
 

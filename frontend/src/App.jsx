@@ -68,6 +68,8 @@ import {
   routeFromHash,
 } from "./productModel";
 import TemplateWorkspace from "./TemplateWorkspace";
+import DocumentWorkspace from "./DocumentWorkspace";
+import RecordsWorkspace from "./RecordsWorkspace";
 
 const STORAGE_KEYS = {
   theme: "insureocr.theme.v2",
@@ -261,6 +263,7 @@ function App() {
   const [documents, setDocuments] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [registrations, setRegistrations] = useState([]);
+  const [auditEvents, setAuditEvents] = useState([]);
   const [activePage, setActivePage] = useState(() => routeFromHash());
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [selectedRegistrationId, setSelectedRegistrationId] = useState("");
@@ -303,6 +306,7 @@ function App() {
       setTemplates(data.templates);
       setRegistrations(data.registrations);
       setDocuments(data.documents);
+      setAuditEvents(data.auditEvents ?? []);
       setSelectedDocumentId(data.documents.find((item) => item.id === preferredDocumentId)?.id ?? data.documents[0]?.id ?? "");
       setSelectedRegistrationId(
         data.registrations.find((item) => item.id === preferredRegistrationId)?.id ?? data.registrations[0]?.id ?? "",
@@ -577,15 +581,12 @@ function App() {
           />
         )}
         {activePage === APP_ROUTES.PROCESS && (
-          <CompletedFormsPage
+          <DocumentWorkspace
             documents={documents}
-            setDocuments={setDocuments}
             templates={templates}
             selectedDocument={selectedDocument}
             selectedDocumentId={selectedDocumentId}
             setSelectedDocumentId={setSelectedDocumentId}
-            activeFieldGroup={activeFieldGroup}
-            setActiveFieldGroup={setActiveFieldGroup}
             updateDocumentField={updateDocumentField}
             saveSelectedDocumentCorrections={saveSelectedDocumentCorrections}
             setDocumentStatus={setDocumentStatus}
@@ -593,17 +594,24 @@ function App() {
             deleteDocument={deleteDocument}
             refreshData={refreshData}
             setApiError={setApiError}
+            fieldLibrary={FIELD_LIBRARY}
+            fieldGroups={FIELD_GROUPS}
+            validateDocument={validateDocument}
+            getFormType={getFormType}
           />
         )}
         {activePage === APP_ROUTES.RECORDS && (
-          <RecordsPage
-            documents={filteredDocuments}
+          <RecordsWorkspace
+            documents={documents}
             templates={templates}
+            auditEvents={auditEvents}
             recordSearch={recordSearch}
             setRecordSearch={setRecordSearch}
             selectedDocumentId={selectedDocumentId}
             setSelectedDocumentId={setSelectedDocumentId}
             setActivePage={navigate}
+            getFormType={getFormType}
+            formatAmount={formatAmount}
           />
         )}
         {activePage === APP_ROUTES.REPORTS && (
