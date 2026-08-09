@@ -3,10 +3,15 @@ import {
   AlertCircle,
   AlertTriangle,
   Archive,
+  Bell,
   BookOpenCheck,
   Car,
   CheckCircle2,
   ChevronLeft,
+  ChevronRight,
+  CircleHelp,
+  ClipboardCheck,
+  Clock3,
   CloudUpload,
   Database,
   Download,
@@ -28,9 +33,12 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ScanLine,
   Search,
   Send,
+  Settings,
   Shield,
+  SlidersHorizontal,
   Sun,
   Table2,
   Trash2,
@@ -51,6 +59,15 @@ import {
   uploadCompletedDocuments,
   uploadTemplateRegistration,
 } from "./api";
+import {
+  APP_ROUTES,
+  DOCUMENT_STATUSES,
+  getReviewPriority,
+  hashForRoute,
+  normalizeRoute,
+  routeFromHash,
+} from "./productModel";
+import TemplateWorkspace from "./TemplateWorkspace";
 
 const STORAGE_KEYS = {
   theme: "insureocr.theme.v2",
@@ -244,7 +261,7 @@ function App() {
   const [documents, setDocuments] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [registrations, setRegistrations] = useState([]);
-  const [activePage, setActivePage] = useState("command");
+  const [activePage, setActivePage] = useState(() => routeFromHash());
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
   const [selectedRegistrationId, setSelectedRegistrationId] = useState("");
   const [activeFieldGroup, setActiveFieldGroup] = useState("Policy");
@@ -258,6 +275,13 @@ function App() {
 
   useEffect(() => {
     refreshData();
+  }, []);
+
+  useEffect(() => {
+    const handleRouteChange = () => setActivePage(routeFromHash());
+    window.addEventListener("hashchange", handleRouteChange);
+    if (!window.location.hash) window.history.replaceState(null, "", hashForRoute(activePage));
+    return () => window.removeEventListener("hashchange", handleRouteChange);
   }, []);
 
   useEffect(() => {
@@ -323,13 +347,20 @@ function App() {
   }, [documents, recordSearch, templates]);
 
   const navItems = [
-    { id: "command", label: "Command Center", icon: LayoutDashboard },
-    { id: "formTypes", label: "Form Types", icon: BookOpenCheck },
-    { id: "register", label: "Template Registration", icon: LayoutTemplate, count: stats.pendingTemplates },
-    { id: "process", label: "Completed Forms", icon: Workflow, count: stats.needsReview },
-    { id: "records", label: "Records", icon: Database },
-    { id: "export", label: "Export Hub", icon: Download },
+    { id: APP_ROUTES.WORK_QUEUE, label: "Work Queue", icon: ClipboardCheck, count: stats.needsReview },
+    { id: APP_ROUTES.TEMPLATES, label: "Templates", icon: LayoutTemplate, count: stats.pendingTemplates },
+    { id: APP_ROUTES.PROCESS, label: "Process Documents", icon: ScanLine },
+    { id: APP_ROUTES.RECORDS, label: "Records", icon: Database },
+    { id: APP_ROUTES.REPORTS, label: "Reports & Export", icon: Download },
   ];
+
+  const activeNavItem = navItems.find((item) => item.id === activePage) ?? navItems[0];
+
+  function navigate(page) {
+    const nextPage = normalizeRoute(page);
+    setActivePage(nextPage);
+    window.history.pushState(null, "", hashForRoute(nextPage));
+  }
 
   function refreshBackendData() {
     setActionMessage("");
@@ -450,11 +481,11 @@ function App() {
       <aside className={`sidebar ${sidebarOpen ? "open" : "closed"}`}>
         <div className="sidebar-header">
           <div className="brand">
-            <span className="brand-mark">IO</span>
+            <span className="brand-mark"><ScanLine size={21} /></span>
             {sidebarOpen && (
               <div>
-                <strong>InsureOCR</strong>
-                <span>Template-driven OCR</span>
+                <strong>FormFlow OCR</strong>
+                <span>Insurance operations</span>
               </div>
             )}
           </div>
@@ -472,7 +503,7 @@ function App() {
                 className={activePage === item.id ? "active" : ""}
                 type="button"
                 title={item.label}
-                onClick={() => setActivePage(item.id)}
+                onClick={() => navigate(item.id)}
               >
                 <Icon size={18} />
                 {sidebarOpen && <span>{item.label}</span>}
@@ -485,9 +516,11 @@ function App() {
         <div className="sidebar-footer">
           {sidebarOpen && (
             <div className="operator-card">
-              <span>Operations Manager</span>
-              <strong>Claims Review Desk</strong>
-              <small>Template registry and OCR review</small>
+              <span className="operator-avatar">CR</span>
+              <div>
+                <strong>Claims Review</strong>
+                <small>Operations team</small>
+              </div>
             </div>
           )}
           <button className="theme-button" type="button" onClick={() => setDarkMode((value) => !value)}>
@@ -498,25 +531,39 @@ function App() {
       </aside>
 
       <main className={`workspace ${sidebarOpen ? "expanded" : "collapsed"}`}>
-        {activePage === "command" && (
-          <CommandCenter
+        <header className="workspace-topbar">
+          <div className="topbar-context">
+            <span>Operations</span>
+            <ChevronRight size={14} />
+            <strong>{activeNavItem.label}</strong>
+          </div>
+          <div className="topbar-actions">
+            <span className={`system-state ${apiError ? "error" : apiLoading ? "loading" : ""}`}>
+              <i /> {apiError ? "OCR services offline" : apiLoading ? "Checking services" : "OCR services connected"}
+            </span>
+            <button className="icon-button" type="button" aria-label="Help"><CircleHelp size={18} /></button>
+            <button className="icon-button notification-button" type="button" aria-label="Notifications">
+              <Bell size={18} />
+              {(stats.needsReview + stats.pendingTemplates) > 0 && <i />}
+            </button>
+          </div>
+        </header>
+
+        <div className="workspace-content">
+        {activePage === APP_ROUTES.WORK_QUEUE && (
+          <WorkQueuePage
             stats={stats}
             templates={templates}
             registrations={registrations}
             documents={documents}
             onRefresh={refreshBackendData}
-            setActivePage={setActivePage}
+            setActivePage={navigate}
           />
         )}
-        {activePage === "formTypes" && (
-          <FormTypesPage templates={templates} documents={documents} setActivePage={setActivePage} />
-        )}
-        {activePage === "register" && (
-          <TemplateRegistrationPage
+        {activePage === APP_ROUTES.TEMPLATES && (
+          <TemplateWorkspace
             templates={templates}
-            setTemplates={setTemplates}
             registrations={registrations}
-            setRegistrations={setRegistrations}
             selectedRegistration={selectedRegistration}
             selectedRegistrationId={selectedRegistrationId}
             setSelectedRegistrationId={setSelectedRegistrationId}
@@ -524,9 +571,12 @@ function App() {
             refreshData={refreshData}
             saveRegistrationFields={saveRegistrationFields}
             setApiError={setApiError}
+            formTypes={FORM_TYPES}
+            getFormType={getFormType}
+            getRegistrationFields={getRegistrationFields}
           />
         )}
-        {activePage === "process" && (
+        {activePage === APP_ROUTES.PROCESS && (
           <CompletedFormsPage
             documents={documents}
             setDocuments={setDocuments}
@@ -545,7 +595,7 @@ function App() {
             setApiError={setApiError}
           />
         )}
-        {activePage === "records" && (
+        {activePage === APP_ROUTES.RECORDS && (
           <RecordsPage
             documents={filteredDocuments}
             templates={templates}
@@ -553,106 +603,153 @@ function App() {
             setRecordSearch={setRecordSearch}
             selectedDocumentId={selectedDocumentId}
             setSelectedDocumentId={setSelectedDocumentId}
-            setActivePage={setActivePage}
+            setActivePage={navigate}
           />
         )}
-        {activePage === "export" && (
+        {activePage === APP_ROUTES.REPORTS && (
           <ExportHub documents={documents} downloadExport={downloadExport} />
         )}
         {(apiLoading || apiBusy || apiError || actionMessage) && (
           <ApiBanner loading={apiLoading || apiBusy} error={apiError} message={actionMessage} />
         )}
+        </div>
       </main>
     </div>
   );
 }
 
-function CommandCenter({ stats, templates, registrations, documents, onRefresh, setActivePage }) {
-  const latestDocuments = documents.slice(0, 4);
+function WorkQueuePage({ stats, templates, registrations, documents, onRefresh, setActivePage }) {
+  const reviewDocuments = documents
+    .filter((document) => document.status === DOCUMENT_STATUSES.NEEDS_REVIEW || document.status === DOCUMENT_STATUSES.FAILED)
+    .sort((a, b) => Number(a.confidence) - Number(b.confidence));
+  const latestDocuments = documents.slice(0, 5);
   const pendingRegistration = registrations.find((job) => job.status !== "Registered");
 
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Command center"
-        title="Insurance OCR operations console"
-        description="Template registration and completed-form processing are separated so approved templates can be reused across future uploads."
+        eyebrow="Today’s work"
+        title="Claims review work queue"
+        description="Review OCR exceptions, approve template drafts, and move completed claims into your core system."
       >
         <button className="button secondary" type="button" onClick={onRefresh}>
-          <RefreshCw size={16} /> Refresh data
+          <RefreshCw size={16} /> Refresh
         </button>
       </PageHeader>
 
-      <section className="command-grid">
-        <div className="command-hero">
+      <section className="work-overview">
+        <div className="work-intro-card">
           <div>
-            <span className="section-label">Current scope</span>
-            <h2>Health, Life, Motor, and Fire claim forms</h2>
-            <p>Register form layouts first, approve the generated template, then upload completed forms for OCR extraction and human review.</p>
+            <span className="section-label">Start a workflow</span>
+            <h2>What would you like to process?</h2>
+            <p>Upload completed claims for extraction, or register a blank form as a reusable template.</p>
           </div>
           <div className="hero-actions">
-            <button className="button primary" type="button" onClick={() => setActivePage("register")}>
-              <CloudUpload size={16} /> Register new form
+            <button className="button primary" type="button" onClick={() => setActivePage(APP_ROUTES.PROCESS)}>
+              <ScanLine size={17} /> Process documents
             </button>
-            <button className="button secondary" type="button" onClick={() => setActivePage("process")}>
-              <UploadCloud size={16} /> Upload completed forms
+            <button className="button secondary" type="button" onClick={() => setActivePage(APP_ROUTES.TEMPLATES)}>
+              <LayoutTemplate size={17} /> Register template
             </button>
           </div>
         </div>
 
-        <div className="ops-status-card">
-          <span className="section-label">System readiness</span>
-          <strong>{stats.activeTemplates}/4 form types active</strong>
-          <div className="readiness-bar">
-            <span style={{ width: `${Math.min((stats.activeTemplates / 4) * 100, 100)}%` }} />
+        <div className="service-card">
+          <span className="service-icon"><CheckCircle2 size={20} /></span>
+          <div>
+            <span className="section-label">Service status</span>
+            <strong>OCR pipeline is ready</strong>
+            <small>{stats.activeTemplates} active templates available for matching</small>
           </div>
-          <small>{pendingRegistration ? `${pendingRegistration.fileName} is waiting for approval` : "All pending templates are registered"}</small>
         </div>
       </section>
 
-      <section className="metrics-grid">
-        <MetricCard icon={<LayoutTemplate />} label="Active Templates" value={stats.activeTemplates} />
-        <MetricCard icon={<AlertTriangle />} label="Template Approvals" value={stats.pendingTemplates} tone="warn" />
-        <MetricCard icon={<Users />} label="Human Review" value={stats.needsReview} tone="warn" />
-        <MetricCard icon={<Gauge />} label="Avg Confidence" value={`${Math.round(stats.averageConfidence * 100)}%`} tone="good" />
+      <section className="metrics-grid work-metrics">
+        <MetricCard icon={<ClipboardCheck />} label="Needs review" value={stats.needsReview} tone="warn" />
+        <MetricCard icon={<Loader2 />} label="Processing" value={stats.processing} />
+        <MetricCard icon={<LayoutTemplate />} label="Template drafts" value={stats.pendingTemplates} tone="warn" />
+        <MetricCard icon={<CheckCircle2 />} label="Ready to sync" value={stats.ready} tone="good" />
       </section>
 
-      <div className="dashboard-grid">
-        <section className="panel">
-          <PanelTitle eyebrow="Template registry" title="Registered templates" />
-          <div className="template-health">
-            {templates.map((template) => (
-              <div className="template-health-item" key={template.id}>
-                <span className="type-chip" style={{ "--accent": getFormType(template.formTypeId).accent }}>
-                  {getFormType(template.formTypeId).name}
-                </span>
-                <div>
-                  <strong>{template.name}</strong>
-                  <small>{template.id} | v{template.version}</small>
-                </div>
-                <StatusBadge status={template.status} />
-              </div>
-            ))}
+      <div className="work-grid">
+        <section className="panel review-queue-panel">
+          <div className="panel-heading compact">
+            <div>
+              <span className="section-label">Priority queue</span>
+              <h2>Documents requiring attention</h2>
+              <p>Items with validation issues and lower confidence appear first.</p>
+            </div>
+            <button className="button text-button" type="button" onClick={() => setActivePage(APP_ROUTES.PROCESS)}>
+              View all <ChevronRight size={16} />
+            </button>
           </div>
+
+          {reviewDocuments.length ? (
+            <div className="work-list">
+              {reviewDocuments.slice(0, 6).map((document) => (
+                <button className="work-item" type="button" key={document.id} onClick={() => setActivePage(APP_ROUTES.PROCESS)}>
+                  <span className={`priority-marker ${getReviewPriority(document)}`} />
+                  <span className="file-icon"><FileText size={18} /></span>
+                  <span className="work-item-copy">
+                    <strong>{document.fileName}</strong>
+                    <small>{getFormType(document.formTypeId).label} · {document.id}</small>
+                  </span>
+                  <span className="confidence-summary">
+                    <small>Confidence</small>
+                    <strong>{Math.round(document.confidence * 100)}%</strong>
+                  </span>
+                  <StatusBadge status={document.status} />
+                  <ChevronRight size={17} />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="queue-clear">
+              <span><CheckCircle2 size={24} /></span>
+              <strong>Your review queue is clear</strong>
+              <p>New OCR exceptions and completed extractions will appear here.</p>
+              <button className="button secondary" type="button" onClick={() => setActivePage(APP_ROUTES.PROCESS)}>
+                Process a document
+              </button>
+            </div>
+          )}
         </section>
 
-        <section className="panel">
-          <PanelTitle eyebrow="Processing queue" title="Latest completed forms" />
-          <div className="activity-list">
-            {latestDocuments.map((document) => (
-              <div className="activity-item" key={document.id}>
-                <span className="activity-icon">
-                  {document.status === "Processing" ? <Loader2 size={16} /> : <FileCheck2 size={16} />}
-                </span>
+        <div className="work-side-stack">
+          <section className="panel attention-panel">
+            <PanelTitle eyebrow="Template registry" title="Attention needed" />
+            {pendingRegistration ? (
+              <button className="attention-item" type="button" onClick={() => setActivePage(APP_ROUTES.TEMPLATES)}>
+                <span><AlertTriangle size={18} /></span>
                 <div>
-                  <strong>{document.fileName}</strong>
-                  <small>{document.id} | {getFormType(document.formTypeId).label}</small>
+                  <strong>Template awaiting review</strong>
+                  <small>{pendingRegistration.fileName}</small>
                 </div>
-                <StatusBadge status={document.status} />
+                <ChevronRight size={16} />
+              </button>
+            ) : (
+              <p className="quiet-copy">No template drafts require approval.</p>
+            )}
+          </section>
+
+          <section className="panel recent-panel">
+            <PanelTitle eyebrow="Recent activity" title="Latest documents" />
+            {latestDocuments.length ? (
+              <div className="activity-list compact-list">
+                {latestDocuments.map((document) => (
+                  <div className="activity-item" key={document.id}>
+                    <span className="activity-icon"><Clock3 size={15} /></span>
+                    <div>
+                      <strong>{document.fileName}</strong>
+                      <small>{document.id}</small>
+                    </div>
+                    <StatusBadge status={document.status} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </section>
+            ) : <p className="quiet-copy">No documents have been processed yet.</p>}
+          </section>
+        </div>
       </div>
     </div>
   );
