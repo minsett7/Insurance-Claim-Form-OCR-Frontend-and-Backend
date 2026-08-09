@@ -1,24 +1,25 @@
 # Insurance OCR Frontend
 
-React/Vite frontend for the Insurance OCR project. This dashboard lets reviewers register claim-form templates, upload completed claim forms, review extracted fields, correct OCR output, search records, and export reviewed data.
+React/Vite operations workspace for template-driven Burmese and English insurance OCR. It lets reviewers register claim-form templates, edit detected bounding boxes, process completed forms, verify automatic template matches, correct OCR output, inspect audit history, and export reviewed data.
 
 This frontend is designed to work with the local FastAPI backend in `../backend`.
 
 ## What This Frontend Includes
 
-- Dashboard / command center for OCR operations.
-- Form type registry for Health, Life, Motor, and Fire claim forms.
-- Blank form template registration screen.
-- Completed form upload and review workspace.
-- Extracted field editor with validation warnings and confidence badges.
-- Records table with search.
+- Task-focused OCR work queue.
+- Template registry with visual bounding-box editing and version approval.
+- Automatic-match document intake and exception states.
+- Split-screen source document and extracted-field review.
+- Confidence, validation, and source-region linking.
+- Searchable records and backend audit history.
+- Batch selection, keyboard review shortcuts, and selected-record export.
 - JSON, CSV, Excel, API payload, and correction export buttons.
 - Light/dark mode.
 - Backend API integration through `src/api.js`.
 
 ## What This Frontend Does Not Include
 
-- OCR model inference.
+- OCR/layout model inference.
 - Backend database.
 - Authentication/login.
 - User roles and permissions.
@@ -154,14 +155,25 @@ http://127.0.0.1:5173
 
 4. Test workflow:
 
-- Open `Template Registration`.
+- Open `Templates`.
 - Upload a blank claim form PDF/image.
 - Approve the generated template.
-- Open `Completed Forms`.
+- Open `Process Documents`.
 - Upload a completed claim form.
 - Review/edit extracted fields.
 - Mark ready or sync.
-- Open `Export Hub` and download JSON/CSV/Excel.
+- Open `Records` to inspect audit history or `Reports & Export` to download JSON/CSV/Excel.
+
+## Review Shortcuts
+
+- `J` / `K`: next or previous document in the current queue
+- `[` / `]`: previous or next validation issue
+- `Ctrl+S`: save review corrections
+- `Ctrl+Enter`: approve and open the next document
+
+## API Migration
+
+The current compatibility endpoints and the target production API are documented in `../docs/FRONTEND_API_CONTRACT.md`.
 
 ## Backend API Used By Frontend
 

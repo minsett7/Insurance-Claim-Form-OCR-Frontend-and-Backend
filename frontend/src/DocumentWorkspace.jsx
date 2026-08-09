@@ -150,8 +150,14 @@ export default function DocumentWorkspace({
         event.preventDefault();
         saveReview();
       }
+      if (!editing && (event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        approveAndNext();
+      }
       if (!editing && event.key === "]") goToIssue(1);
       if (!editing && event.key === "[") goToIssue(-1);
+      if (!editing && event.key.toLowerCase() === "j") goToQueueDocument(1);
+      if (!editing && event.key.toLowerCase() === "k") goToQueueDocument(-1);
     }
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
@@ -248,6 +254,13 @@ export default function DocumentWorkspace({
     if (nextField) setActiveGroup(nextField.group);
   }
 
+  function goToQueueDocument(direction) {
+    if (!queueDocuments.length) return;
+    const currentIndex = queueDocuments.findIndex((document) => document.id === selectedDocumentId);
+    const nextIndex = currentIndex < 0 ? 0 : (currentIndex + direction + queueDocuments.length) % queueDocuments.length;
+    setSelectedDocumentId(queueDocuments[nextIndex].id);
+  }
+
   function overrideTemplate(templateId) {
     if (!selectedDocument) return;
     setTemplateOverrides((current) => ({ ...current, [selectedDocument.id]: templateId }));
@@ -322,6 +335,7 @@ export default function DocumentWorkspace({
             })}
             {!queueDocuments.length && <div className="queue-empty"><FileSearch size={20} /><strong>No documents here</strong><small>Try another filter or upload completed forms.</small></div>}
           </div>
+          <div className="queue-shortcuts"><span><kbd>J</kbd><kbd>K</kbd> Navigate</span><span><kbd>[</kbd><kbd>]</kbd> Issues</span><span><kbd>Ctrl</kbd><kbd>↵</kbd> Approve</span></div>
         </aside>
 
         <main className="document-review-shell">
@@ -480,4 +494,3 @@ function MockSection({ title }) {
 function MockValue({ label, value }) {
   return <label>{label}<span>{value || ""}</span></label>;
 }
-
