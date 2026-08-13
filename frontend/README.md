@@ -158,12 +158,16 @@ http://127.0.0.1:5173
 4. Test workflow:
 
 - Open `Templates`.
-- Upload a blank claim form PDF/image.
+- Enter a form name, optional description, and category, then upload one blank claim form PDF/image.
+- Use `Manage categories` to create or rename categories. A category that still contains forms
+  cannot be removed.
 - Watch preprocessing, layout, OCR, and VLM progress.
 - For a multi-page PDF, use the `Page 1`, `Page 2`, ... buttons to review each canonical page
   and its page-specific PP-DocLayoutV3 overlays.
 - Edit regions on more than one page, save, switch pages, and confirm all edits remain present.
 - Resolve model review flags, save the revisioned draft, validate, and approve it.
+- Use the form-details row to rename, describe, recategorize, or remove either a draft or an
+  approved form. Removal archives the backend records rather than erasing audit/history data.
 - Open `Process Documents`.
 - Upload a completed claim form.
 - Review/edit extracted fields.
@@ -200,9 +204,15 @@ The frontend expects these endpoints from backend:
 
 ```text
 GET    /api/form-types
+GET    /api/v1/form-categories
+POST   /api/v1/form-categories
+PATCH  /api/v1/form-categories/{id}
+DELETE /api/v1/form-categories/{id}
 GET    /api/templates
 GET    /api/template-registrations
 POST   /api/template-registrations
+PATCH  /api/v1/template-registrations/{id}
+DELETE /api/v1/template-registrations/{id}
 PATCH  /api/template-registrations/{id}/fields
 GET    /api/v1/template-registrations/{id}
 GET    /api/v1/template-registrations/{id}/pages/{page_number}

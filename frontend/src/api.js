@@ -99,12 +99,20 @@ function confidenceFromProcessed(processed) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function processedToExtracted(document) {
+function categoryLabel(formTypeId, formTypes = []) {
+  return formTypes.find((category) => category.id === formTypeId)?.name
+    ?? formTypes.find((category) => category.id === formTypeId)?.label
+    ?? FORM_TYPE_LABELS[formTypeId]
+    ?? formTypeId
+    ?? "Insurance Claim";
+}
+
+function processedToExtracted(document, formTypes = []) {
   const processedFields = document.processed?.fields ?? {};
   const extracted = {
     policyNumber: "",
     claimNumber: "",
-    formType: FORM_TYPE_LABELS[document.form_type_id] ?? "Insurance Claim",
+    formType: categoryLabel(document.form_type_id, formTypes),
     claimantName: "",
     insuredName: "",
     nrc: "",
@@ -157,16 +165,17 @@ export function correctionPayloadFromExtracted(extracted) {
   return { fields };
 }
 
-export function adaptTemplate(template) {
+export function adaptTemplate(template, formTypes = []) {
   return {
     id: template.id,
     name: template.name,
+    description: template.description ?? "",
     formTypeId: template.form_type_id,
-    formTypeLabel: FORM_TYPE_LABELS[template.form_type_id] ?? template.form_type_id,
+    formTypeLabel: categoryLabel(template.form_type_id, formTypes),
     version: template.version ?? "1.0",
     status: apiStatusToUi(template.status),
     confidenceScore: Number(template.confidence_score ?? template.confidenceScore ?? 0),
-    owner: FORM_TYPE_OWNERS[template.form_type_id] ?? "Claims",
+    owner: FORM_TYPE_OWNERS[template.form_type_id] ?? `${categoryLabel(template.form_type_id, formTypes)} Team`,
     updatedAt: String(template.updated_at ?? template.updatedAt ?? "").slice(0, 10),
     fields: fieldsToUi(template.fields ?? []),
     sourceFile: template.source_file ?? template.sourceFile ?? "",
@@ -179,6 +188,8 @@ export function adaptRegistration(registration) {
   const fields = (draft?.regions ?? []).map((region) => region.key).filter(Boolean);
   return {
     id: registration.id,
+    name: registration.name ?? registration.file_name,
+    description: registration.description ?? "",
     fileName: registration.file_name,
     formTypeId: registration.form_type_id,
     status: apiStatusToUi(registration.status),
@@ -208,7 +219,7 @@ export function adaptRegistration(registration) {
   };
 }
 
-export function adaptDocument(document) {
+export function adaptDocument(document, formTypes = []) {
   return {
     id: document.id,
     fileName: document.file_name,
@@ -222,7 +233,7 @@ export function adaptDocument(document) {
     pages: document.pages ?? 1,
     processingTime: document.status === "processing" ? "Running" : "Completed",
     pipelineStage: document.status === "processing" ? 4 : 7,
-    extracted: processedToExtracted(document),
+    extracted: processedToExtracted(document, formTypes),
     confidenceByField: confidenceByField(document),
     auditTrail: [
       { at: document.created_at ?? "", action: "Uploaded to backend" },
@@ -255,6 +266,7 @@ async function request(path, options = {}) {
     }
     throw new Error(detail);
   }
+  if (response.status === 204) return null;
   return response.json();
 }
 
@@ -265,26 +277,72 @@ function fileFormData(files) {
 }
 
 export async function fetchDashboardData() {
-  const [templates, registrations, documents, auditEvents] = await Promise.all([
+  const [templates, registrations, documents, auditEvents, formTypes] = await Promise.all([
     request("/api/templates"),
     request("/api/template-registrations"),
     request("/api/documents"),
     request("/api/audit-events"),
+    request("/api/v1/form-categories"),
   ]);
 
   return {
-    templates: templates.map(adaptTemplate),
+    templates: templates.map((template) => adaptTemplate(template, formTypes)),
     registrations: registrations.map(adaptRegistration),
-    documents: documents.map(adaptDocument),
+    documents: documents.map((document) => adaptDocument(document, formTypes)),
     auditEvents: auditEvents.map(adaptAuditEvent).reverse(),
+    formTypes,
   };
 }
 
-export async function uploadTemplateRegistration(formTypeId, files, preprocessingPolicy = "auto") {
-  return request(`/api/template-registrations?form_type_id=${encodeURIComponent(formTypeId)}&preprocessing_policy=${encodeURIComponent(preprocessingPolicy)}`, {
-    method: "POST",
-    body: fileFormData(files),
+export async function uploadTemplateRegistration(metadata, files, preprocessingPolicy = "auto") {
+  const items = await Promise.all(Array.from(files).map((file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("name", metadata.name);
+    formData.append("description", metadata.description ?? "");
+    formData.append("form_type_id", metadata.formTypeId);
+    formData.append("language", metadata.language ?? "my-en");
+    formData.append("preprocessing_policy", preprocessingPolicy);
+    return request("/api/v1/template-registrations", { method: "POST", body: formData });
+  }));
+  return { items };
+}
+
+export async function updateTemplateRegistrationMetadata(registrationId, metadata) {
+  const registration = await request(`/api/v1/template-registrations/${encodeURIComponent(registrationId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: metadata.name,
+      description: metadata.description ?? "",
+      form_type_id: metadata.formTypeId,
+    }),
   });
+  return adaptRegistration(registration);
+}
+
+export async function deleteTemplateRegistration(registrationId) {
+  return request(`/api/v1/template-registrations/${encodeURIComponent(registrationId)}`, { method: "DELETE" });
+}
+
+export async function createFormCategory(category) {
+  return request("/api/v1/form-categories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(category),
+  });
+}
+
+export async function updateFormCategory(categoryId, category) {
+  return request(`/api/v1/form-categories/${encodeURIComponent(categoryId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(category),
+  });
+}
+
+export async function deleteFormCategory(categoryId) {
+  return request(`/api/v1/form-categories/${encodeURIComponent(categoryId)}`, { method: "DELETE" });
 }
 
 export async function approveTemplateRegistration(registrationId) {

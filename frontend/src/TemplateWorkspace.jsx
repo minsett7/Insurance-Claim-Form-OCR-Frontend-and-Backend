@@ -23,7 +23,12 @@ import {
   ZoomOut,
 } from "lucide-react";
 import {
+  createFormCategory,
+  deleteFormCategory,
+  deleteTemplateRegistration,
   saveTemplateRegistrationDraft,
+  updateFormCategory,
+  updateTemplateRegistrationMetadata,
   uploadTemplateRegistration,
   validateTemplateRegistration,
 } from "./api";
@@ -73,6 +78,8 @@ export default function TemplateWorkspace({
   getRegistrationFields,
 }) {
   const [formTypeId, setFormTypeId] = useState("health");
+  const [formName, setFormName] = useState("");
+  const [formDescription, setFormDescription] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [uploading, setUploading] = useState(false);
   const [registrySearch, setRegistrySearch] = useState("");
@@ -87,12 +94,20 @@ export default function TemplateWorkspace({
   const [showUpload, setShowUpload] = useState(!registrations.length);
   const [serverValidationErrors, setServerValidationErrors] = useState([]);
   const [selectedPageNumber, setSelectedPageNumber] = useState(1);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryDescription, setNewCategoryDescription] = useState("");
+  const [metadataName, setMetadataName] = useState("");
+  const [metadataDescription, setMetadataDescription] = useState("");
+  const [metadataCategoryId, setMetadataCategoryId] = useState("");
+  const [metadataSaving, setMetadataSaving] = useState(false);
 
   const selectedTemplate = selectedRegistration
     ? templates.find((template) => template.id === selectedRegistration.templateId)
     : null;
   const readOnly = selectedRegistration?.rawStatus === "registered";
   const reviewable = selectedRegistration?.rawStatus === "needs_approval";
+  const manageable = ["needs_approval", "needs_resubmission", "failed", "registered"].includes(selectedRegistration?.rawStatus);
   const hasDraft = Boolean(selectedRegistration?.draft);
   const draftPages = selectedRegistration?.pages ?? [];
   const selectedPage = draftPages.find((page) => Number(page.page_number) === selectedPageNumber) ?? draftPages[0] ?? null;
@@ -131,6 +146,18 @@ export default function TemplateWorkspace({
     setServerValidationErrors([]);
     setTool("select");
   }, [selectedRegistration?.id, selectedRegistration?.draftRevision]);
+
+  useEffect(() => {
+    setMetadataName(selectedRegistration?.name ?? selectedRegistration?.fileName ?? "");
+    setMetadataDescription(selectedRegistration?.description ?? "");
+    setMetadataCategoryId(selectedRegistration?.formTypeId ?? formTypes[0]?.id ?? "");
+  }, [selectedRegistration?.id, selectedRegistration?.name, selectedRegistration?.description, selectedRegistration?.formTypeId]);
+
+  useEffect(() => {
+    if (!formTypes.some((category) => category.id === formTypeId)) {
+      setFormTypeId(formTypes[0]?.id ?? "");
+    }
+  }, [formTypes, formTypeId]);
 
   useEffect(() => {
     if (!visibleRegions.some((region) => region.id === selectedRegionId)) {
@@ -184,6 +211,17 @@ export default function TemplateWorkspace({
     const accepted = files.filter(supportedFile);
     setUploadError("");
 
+    if (!formName.trim()) {
+      setUploadError("Enter a form name before choosing the blank form file.");
+      event.target.value = "";
+      return;
+    }
+    if (!formTypeId) {
+      setUploadError("Create or select a form category before uploading.");
+      event.target.value = "";
+      return;
+    }
+
     if (files.length && accepted.length !== files.length) {
       setUploadError("Some files were skipped. Use PDF, PNG, JPG, or TIFF files up to 15 MB.");
     }
@@ -194,7 +232,11 @@ export default function TemplateWorkspace({
 
     setUploading(true);
     try {
-      const result = await uploadTemplateRegistration(formTypeId, accepted);
+      const result = await uploadTemplateRegistration({
+        formTypeId,
+        name: formName.trim(),
+        description: formDescription.trim(),
+      }, accepted);
       const items = result.items ?? [];
       const nextPreviews = {};
       items.forEach((item, index) => {
@@ -206,11 +248,80 @@ export default function TemplateWorkspace({
       setSelectedRegistrationId(firstId);
       await refreshData({ registrationId: firstId });
       setShowUpload(false);
+      setFormName("");
+      setFormDescription("");
     } catch (error) {
       setApiError(`Template upload failed. ${error.message}`);
     } finally {
       setUploading(false);
       event.target.value = "";
+    }
+  }
+
+  async function createCategory() {
+    if (!newCategoryName.trim()) return;
+    try {
+      const category = await createFormCategory({
+        name: newCategoryName.trim(),
+        description: newCategoryDescription.trim(),
+      });
+      setNewCategoryName("");
+      setNewCategoryDescription("");
+      setFormTypeId(category.id);
+      await refreshData();
+    } catch (error) {
+      setApiError(`Could not create category. ${error.message}`);
+    }
+  }
+
+  async function renameCategory(category) {
+    const name = window.prompt("Category name", category.name ?? category.label);
+    if (name === null || !name.trim()) return;
+    const description = window.prompt("Category description", category.description ?? "");
+    if (description === null) return;
+    try {
+      await updateFormCategory(category.id, { name: name.trim(), description: description.trim() });
+      await refreshData();
+    } catch (error) {
+      setApiError(`Could not update category. ${error.message}`);
+    }
+  }
+
+  async function removeCategory(category) {
+    if (!window.confirm(`Remove the category “${category.name ?? category.label}”?`)) return;
+    try {
+      await deleteFormCategory(category.id);
+      await refreshData();
+    } catch (error) {
+      setApiError(`Could not remove category. ${error.message}`);
+    }
+  }
+
+  async function saveMetadata() {
+    if (!selectedRegistration || !manageable || !metadataName.trim() || !metadataCategoryId) return;
+    setMetadataSaving(true);
+    try {
+      await updateTemplateRegistrationMetadata(selectedRegistration.id, {
+        name: metadataName.trim(),
+        description: metadataDescription.trim(),
+        formTypeId: metadataCategoryId,
+      });
+      await refreshData({ registrationId: selectedRegistration.id });
+    } catch (error) {
+      setApiError(`Could not update form details. ${error.message}`);
+    } finally {
+      setMetadataSaving(false);
+    }
+  }
+
+  async function removeForm() {
+    if (!selectedRegistration || !manageable) return;
+    if (!window.confirm(`Remove “${selectedRegistration.name ?? selectedRegistration.fileName}”? Existing processing history and artifacts will be retained.`)) return;
+    try {
+      await deleteTemplateRegistration(selectedRegistration.id);
+      await refreshData({ registrationId: "" });
+    } catch (error) {
+      setApiError(`Could not remove form. ${error.message}`);
     }
   }
 
@@ -271,6 +382,10 @@ export default function TemplateWorkspace({
               <small>The system will detect printed labels and propose editable extraction regions.</small>
             </div>
           </div>
+          <div className="intake-metadata">
+            <label><span>Form name</span><input value={formName} maxLength={160} onChange={(event) => setFormName(event.target.value)} placeholder="Vehicle damage claim form" /></label>
+            <label><span>Description</span><textarea value={formDescription} maxLength={2000} onChange={(event) => setFormDescription(event.target.value)} placeholder="What this blank form is used for" /></label>
+          </div>
           <div className="intake-controls">
             <label className="compact-select">
               <span>Form category</span>
@@ -278,14 +393,35 @@ export default function TemplateWorkspace({
                 {formTypes.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
               </select>
             </label>
+            <button className="button secondary" type="button" onClick={() => setShowCategoryManager((value) => !value)}>
+              Manage categories
+            </button>
             <label className={`intake-drop ${uploading ? "busy" : ""}`}>
               {uploading ? <Loader2 size={18} /> : <CloudUpload size={18} />}
               <span>{uploading ? "Analyzing form…" : "Choose file or drop here"}</span>
-              <input type="file" multiple accept="image/*,.pdf,.tif,.tiff" onChange={uploadTemplateFiles} disabled={uploading} />
+              <input type="file" accept="image/*,.pdf,.tif,.tiff" onChange={uploadTemplateFiles} disabled={uploading} />
             </label>
             <button className="icon-button" type="button" aria-label="Close upload panel" onClick={() => setShowUpload(false)}>×</button>
           </div>
           {uploadError && <p className="form-error">{uploadError}</p>}
+          {showCategoryManager && (
+            <div className="category-manager">
+              <div className="category-create-row">
+                <label><span>New category</span><input value={newCategoryName} maxLength={100} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="Travel Claim" /></label>
+                <label><span>Description</span><input value={newCategoryDescription} maxLength={1000} onChange={(event) => setNewCategoryDescription(event.target.value)} placeholder="Optional description" /></label>
+                <button className="button primary" type="button" disabled={!newCategoryName.trim()} onClick={createCategory}><Plus size={15} /> Add</button>
+              </div>
+              <div className="category-list">
+                {formTypes.map((category) => (
+                  <div key={category.id}>
+                    <span><strong>{category.name ?? category.label}</strong><small>{category.description || "No description"}</small></span>
+                    <button className="button text-button" type="button" onClick={() => renameCategory(category)}>Rename</button>
+                    <button className="button text-button danger-text" type="button" onClick={() => removeCategory(category)}>Remove</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -315,7 +451,7 @@ export default function TemplateWorkspace({
                 >
                   <span className="registry-file-icon"><FileText size={17} /></span>
                   <span className="registry-item-copy">
-                    <strong>{registration.fileName}</strong>
+                    <strong>{registration.name ?? registration.fileName}</strong>
                     <small>{type.label} · v{templates.find((item) => item.id === registration.templateId)?.version ?? "0.1"}</small>
                   </span>
                   <span className={`mini-status ${statusClass(registration.status)}`}>{registration.status}</span>
@@ -348,7 +484,7 @@ export default function TemplateWorkspace({
                 <div className="editor-title">
                   <div>
                     <span className="section-label">{readOnly ? "Approved template" : reviewable ? "Human review" : "Processing template"}</span>
-                    <h2>{selectedRegistration.fileName}</h2>
+                    <h2>{selectedRegistration.name ?? selectedRegistration.fileName}</h2>
                     <p>{getFormType(selectedRegistration.formTypeId).label} · {selectedRegistration.id} · {regions.length} regions</p>
                   </div>
                   <span className={`mini-status ${statusClass(selectedRegistration.status)}`}>{selectedRegistration.status}</span>
@@ -363,6 +499,14 @@ export default function TemplateWorkspace({
                   </button>
                 </div>
               </div>
+
+              <section className="template-metadata-card">
+                <label><span>Form name</span><input value={metadataName} maxLength={160} disabled={!manageable} onChange={(event) => setMetadataName(event.target.value)} /></label>
+                <label className="metadata-description"><span>Description</span><textarea value={metadataDescription} maxLength={2000} disabled={!manageable} onChange={(event) => setMetadataDescription(event.target.value)} /></label>
+                <label><span>Category</span><select value={metadataCategoryId} disabled={!manageable} onChange={(event) => setMetadataCategoryId(event.target.value)}>{formTypes.map((category) => <option value={category.id} key={category.id}>{category.name ?? category.label}</option>)}</select></label>
+                <button className="button secondary" type="button" disabled={!manageable || metadataSaving || !metadataName.trim() || !metadataCategoryId} onClick={saveMetadata}>{metadataSaving ? <Loader2 size={15} /> : <Save size={15} />} Save details</button>
+                <button className="button text-button danger-text" type="button" disabled={!manageable} onClick={removeForm}><Trash2 size={15} /> Remove form</button>
+              </section>
 
               <TemplateProgress registration={selectedRegistration} />
 

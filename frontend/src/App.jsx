@@ -52,7 +52,7 @@ import RecordsWorkspace from "./RecordsWorkspace";
 
 const STORAGE_KEYS = { theme: "formflow.theme.v1" };
 
-const FORM_TYPES = [
+const DEFAULT_FORM_TYPES = [
   { id: "health", name: "Health", label: "Health Claim", accent: "#15803d" },
   { id: "life", name: "Life", label: "Life Claim", accent: "#4f46e5" },
   { id: "motor", name: "Motor", label: "Motor Claim", accent: "#b45309" },
@@ -95,10 +95,6 @@ const DEFAULT_FIELD_KEYS = [
   "lossDate", "reportedDate", "claimCategory", "description", "amountClaimed", "currency", "paymentMethod",
   "bankReference", "assignedTeam", "priority",
 ];
-
-function getFormType(id) {
-  return FORM_TYPES.find((item) => item.id === id) ?? FORM_TYPES[0];
-}
 
 function getRegistrationFields(job) {
   if (Array.isArray(job?.fields)) return job.fields;
@@ -171,6 +167,7 @@ export default function App() {
   const [documents, setDocuments] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [registrations, setRegistrations] = useState([]);
+  const [formTypes, setFormTypes] = useState(DEFAULT_FORM_TYPES);
   const [auditEvents, setAuditEvents] = useState([]);
   const [activePage, setActivePage] = useState(() => routeFromHash());
   const [selectedDocumentId, setSelectedDocumentId] = useState("");
@@ -199,6 +196,12 @@ export default function App() {
 
   const selectedDocument = documents.find((item) => item.id === selectedDocumentId) ?? documents[0] ?? null;
   const selectedRegistration = registrations.find((item) => item.id === selectedRegistrationId) ?? registrations[0] ?? null;
+  const getFormType = (id) => formTypes.find((item) => item.id === id) ?? {
+    id,
+    name: id || "Uncategorized",
+    label: id || "Uncategorized",
+    description: "",
+  };
 
   async function refreshData(options = {}) {
     const preferredDocumentId = options.documentId ?? selectedDocumentId;
@@ -209,6 +212,7 @@ export default function App() {
       const data = await fetchDashboardData();
       setTemplates(data.templates);
       setRegistrations(data.registrations);
+      setFormTypes(data.formTypes?.length ? data.formTypes : DEFAULT_FORM_TYPES);
       setDocuments(data.documents);
       setAuditEvents(data.auditEvents ?? []);
       setSelectedDocumentId(data.documents.find((item) => item.id === preferredDocumentId)?.id ?? data.documents[0]?.id ?? "");
@@ -383,8 +387,8 @@ export default function App() {
         </header>
 
         <div className="workspace-content">
-          {activePage === APP_ROUTES.WORK_QUEUE && <WorkQueuePage stats={stats} registrations={registrations} documents={documents} onRefresh={() => { setActionMessage(""); refreshData(); }} setActivePage={navigate} />}
-          {activePage === APP_ROUTES.TEMPLATES && <TemplateWorkspace templates={templates} registrations={registrations} selectedRegistration={selectedRegistration} selectedRegistrationId={selectedRegistrationId} setSelectedRegistrationId={setSelectedRegistrationId} approveRegistration={approveRegistration} refreshData={refreshData} refreshRegistration={refreshRegistration} saveRegistrationFields={saveRegistrationFields} setApiError={setApiError} formTypes={FORM_TYPES} getFormType={getFormType} getRegistrationFields={getRegistrationFields} />}
+          {activePage === APP_ROUTES.WORK_QUEUE && <WorkQueuePage stats={stats} registrations={registrations} documents={documents} onRefresh={() => { setActionMessage(""); refreshData(); }} setActivePage={navigate} getFormType={getFormType} />}
+          {activePage === APP_ROUTES.TEMPLATES && <TemplateWorkspace templates={templates} registrations={registrations} selectedRegistration={selectedRegistration} selectedRegistrationId={selectedRegistrationId} setSelectedRegistrationId={setSelectedRegistrationId} approveRegistration={approveRegistration} refreshData={refreshData} refreshRegistration={refreshRegistration} saveRegistrationFields={saveRegistrationFields} setApiError={setApiError} formTypes={formTypes} getFormType={getFormType} getRegistrationFields={getRegistrationFields} />}
           {activePage === APP_ROUTES.PROCESS && <DocumentWorkspace documents={documents} templates={templates} selectedDocument={selectedDocument} selectedDocumentId={selectedDocumentId} setSelectedDocumentId={setSelectedDocumentId} updateDocumentField={updateDocumentField} saveSelectedDocumentCorrections={saveSelectedDocumentCorrections} setDocumentStatus={setDocumentStatus} syncSelectedDocument={() => setDocumentStatus("Synced")} deleteDocument={deleteDocument} refreshData={refreshData} setApiError={setApiError} fieldLibrary={FIELD_LIBRARY} fieldGroups={FIELD_GROUPS} validateDocument={validateDocument} getFormType={getFormType} />}
           {activePage === APP_ROUTES.RECORDS && <RecordsWorkspace documents={documents} templates={templates} auditEvents={auditEvents} recordSearch={recordSearch} setRecordSearch={setRecordSearch} selectedDocumentId={selectedDocumentId} setSelectedDocumentId={setSelectedDocumentId} setActivePage={navigate} getFormType={getFormType} formatAmount={formatAmount} />}
           {activePage === APP_ROUTES.REPORTS && <ExportHub documents={documents} downloadExport={downloadExport} />}
@@ -395,7 +399,7 @@ export default function App() {
   );
 }
 
-function WorkQueuePage({ stats, registrations, documents, onRefresh, setActivePage }) {
+function WorkQueuePage({ stats, registrations, documents, onRefresh, setActivePage, getFormType }) {
   const reviewDocuments = documents
     .filter((document) => document.status === DOCUMENT_STATUSES.NEEDS_REVIEW || document.status === DOCUMENT_STATUSES.FAILED)
     .sort((left, right) => Number(left.confidence) - Number(right.confidence));

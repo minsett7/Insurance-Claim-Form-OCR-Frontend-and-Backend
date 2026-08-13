@@ -40,6 +40,16 @@ Values are relative to the page and remain between `0` and `1`. Each region must
 
 ## Canonical Template Registration Contract
 
+### Manage form categories
+
+- `GET /api/v1/form-categories`
+- `POST /api/v1/form-categories` with `name` and optional `description`
+- `PATCH /api/v1/form-categories/{id}` to rename or update its description
+- `DELETE /api/v1/form-categories/{id}` to archive an unused category
+
+The API returns `409 Conflict` when a category is still referenced by an active draft or approved
+template. Category IDs remain stable across renames.
+
 ### Create registration job
 
 `POST /api/v1/template-registrations`
@@ -47,7 +57,8 @@ Values are relative to the page and remain between `0` and `1`. Each region must
 Multipart fields:
 
 - `file`
-- `name`
+- `name` (required, maximum 160 characters)
+- `description` (optional, maximum 2,000 characters)
 - `form_type_id`
 - `language`
 - `version_note` (optional)
@@ -174,6 +185,18 @@ regions visible on the currently selected page.
 - `POST /api/v1/template-registrations/{id}/approve`
 
 Approval should create an immutable template version. Editing an approved template should create a new draft version.
+
+### Manage draft and approved form metadata
+
+- `PATCH /api/v1/template-registrations/{id}` accepts `name`, `description`, and/or
+  `form_type_id`. For an approved registration it also updates the current template catalog entry.
+- `DELETE /api/v1/template-registrations/{id}` archives the draft and its linked approved template.
+- `PATCH /api/v1/templates/{id}` updates an approved catalog entry and its linked registration.
+- `DELETE /api/v1/templates/{id}` archives the approved entry and its linked registration.
+
+Metadata changes do not mutate the immutable approved extraction definition. Delete is a soft
+archive and returns `204 No Content`; retained audit/version/document history remains available
+to backend governance processes but is omitted from normal UI lists.
 
 ## Target Document Processing Contract
 
