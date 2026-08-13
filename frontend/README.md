@@ -2,7 +2,7 @@
 
 React/Vite operations workspace for template-driven Burmese and English insurance OCR. It lets reviewers register claim-form templates, edit detected bounding boxes, process completed forms, verify automatic template matches, correct OCR output, inspect audit history, and export reviewed data.
 
-This frontend is designed to work with the local FastAPI backend in `../backend`.
+In the umbrella deployment this frontend works with the unified orchestrator. The local FastAPI service in `../backend` remains available only for standalone prototype testing.
 
 ## What This Frontend Includes
 
@@ -32,10 +32,12 @@ Those belong to backend/model/infrastructure work.
 ```text
 frontend/
   src/
-    App.jsx       Main application UI and pages
-    api.js        Backend API client
-    styles.css    Application styling
-    main.jsx      React entry point
+    App.jsx                  Main application shell and pages
+    TemplateWorkspace.jsx    Multi-page template review/editor workflow
+    templateEditorModel.js   Backend/editor region conversion and validation
+    api.js                   Backend API client and response adapters
+    styles.css               Application styling
+    main.jsx                 React entry point
   index.html
   package.json
   package-lock.json
@@ -157,7 +159,11 @@ http://127.0.0.1:5173
 
 - Open `Templates`.
 - Upload a blank claim form PDF/image.
-- Approve the generated template.
+- Watch preprocessing, layout, OCR, and VLM progress.
+- For a multi-page PDF, use the `Page 1`, `Page 2`, ... buttons to review each canonical page
+  and its page-specific PP-DocLayoutV3 overlays.
+- Edit regions on more than one page, save, switch pages, and confirm all edits remain present.
+- Resolve model review flags, save the revisioned draft, validate, and approve it.
 - Open `Process Documents`.
 - Upload a completed claim form.
 - Review/edit extracted fields.
@@ -175,6 +181,19 @@ http://127.0.0.1:5173
 
 The current compatibility endpoints and the target production API are documented in `../docs/FRONTEND_API_CONTRACT.md`.
 
+## How multi-page template editing works
+
+The editor keeps page navigation separate from form data. `api.js` reads `draft.pages` and builds
+one URL for each canonical page image. `TemplateWorkspace.jsx` stores every draft region in one
+array, then derives `visibleRegions` by comparing `region.page` with `selectedPageNumber`. Page
+buttons change only that selected number.
+
+Dragging or editing a visible box updates the corresponding item in the complete array by region
+ID. Save converts every region back to the API shape and sends the entire array with the current
+revision. Server validation therefore sees all pages together and can enforce globally unique
+field IDs/keys. The page's `width` and `height` stay server-owned; normalized editor geometry is
+converted to integer pixels by the orchestrator only during approval.
+
 ## Backend API Used By Frontend
 
 The frontend expects these endpoints from backend:
@@ -185,7 +204,11 @@ GET    /api/templates
 GET    /api/template-registrations
 POST   /api/template-registrations
 PATCH  /api/template-registrations/{id}/fields
-POST   /api/template-registrations/{id}/approve
+GET    /api/v1/template-registrations/{id}
+GET    /api/v1/template-registrations/{id}/pages/{page_number}
+PUT    /api/v1/template-registrations/{id}/draft
+POST   /api/v1/template-registrations/{id}/validate
+POST   /api/v1/template-registrations/{id}/approve
 GET    /api/documents
 POST   /api/documents
 PATCH  /api/documents/{id}/fields

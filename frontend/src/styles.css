@@ -2066,6 +2066,69 @@ tbody tr.selected {
   white-space: nowrap;
 }
 
+.registration-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 250px;
+  margin: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--surface-soft);
+}
+
+.registration-state > span {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.registration-state.running > span svg {
+  animation: spin 1s linear infinite;
+}
+
+.registration-state.blocked > span {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.registration-state h3 {
+  margin: 5px 0;
+}
+
+.registration-state p,
+.registration-state small {
+  display: block;
+  color: var(--muted);
+}
+
+.draft-warning-panel {
+  max-height: 150px;
+  overflow: auto;
+  border-bottom: 1px solid color-mix(in srgb, var(--warning) 25%, var(--line));
+  padding: 10px 18px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.72rem;
+}
+
+.draft-warning-panel > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+
+.draft-warning-panel p {
+  margin: 3px 0 3px 24px;
+}
+
 .editor-toolbar {
   justify-content: space-between;
   gap: 12px;
@@ -2176,6 +2239,15 @@ tbody tr.selected {
 .region-list-item:hover,
 .region-list-item.active {
   background: var(--brand-soft);
+}
+
+.region-list-item.disabled {
+  opacity: 0.5;
+}
+
+.authoritative-note {
+  color: var(--muted);
+  text-align: center;
 }
 
 .region-list-item > svg:first-child {
@@ -2335,6 +2407,10 @@ tbody tr.selected {
 .region-box.selected rect {
   fill: rgba(49, 95, 196, 0.14);
   stroke-width: 3;
+}
+
+.region-box.disabled {
+  opacity: 0.35;
 }
 
 .region-box circle {
@@ -2586,6 +2662,27 @@ tbody tr.selected {
   border-radius: 8px;
   padding: 10px;
   background: var(--surface-soft);
+}
+
+.review-flags-card {
+  margin-top: 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--line));
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.68rem;
+}
+
+.review-flags-card p {
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+
+.review-flags-card .button {
+  min-height: 30px;
+  margin-top: 6px;
+  font-size: 0.68rem;
 }
 
 .coordinates-card > span {

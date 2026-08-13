@@ -40,6 +40,14 @@ const API_TO_UI_STATUS = {
   active: "Active",
   draft: "Draft",
   needs_approval: "Needs Approval",
+  needs_resubmission: "Needs Resubmission",
+  validating: "Validating",
+  preprocessing: "Preprocessing",
+  extracting: "Extracting",
+  contract_validation: "Contract Validation",
+  vlm_queued: "VLM Queued",
+  vlm_running: "VLM Running",
+  relationship_validation: "Relationship Validation",
   registered: "Registered",
   uploaded: "Uploaded",
   processing: "Processing",
@@ -166,21 +174,37 @@ export function adaptTemplate(template) {
 }
 
 export function adaptRegistration(registration) {
-  const fields = fieldsToUi(registration.fields ?? []);
+  const draft = registration.draft ?? null;
+  const pages = draft?.pages ?? (draft?.page ? [draft.page] : []);
+  const fields = (draft?.regions ?? []).map((region) => region.key).filter(Boolean);
   return {
     id: registration.id,
     fileName: registration.file_name,
     formTypeId: registration.form_type_id,
     status: apiStatusToUi(registration.status),
-    stage: registration.status === "registered" ? 9 : 7,
+    rawStatus: registration.status,
+    progress: registration.progress ?? { stage: registration.status, percent: 0 },
+    stage: Number(registration.progress?.percent ?? 0),
     uploadedAt: registration.created_at ?? "",
     approvedAt: registration.approved_at ?? null,
-    qualityScore: Number(registration.quality_score ?? 0.86),
+    qualityScore: Number(registration.quality_score ?? draft?.quality_summary?.actionable_coverage_ratio ?? 0),
     layoutScore: Number(registration.layout_score ?? 0.78),
     detectedRegions: Number(registration.detected_regions ?? 0),
     fields,
     detectedFields: fields,
     templateId: registration.template_id,
+    preprocessing: registration.preprocessing ?? null,
+    layoutStatus: registration.layout_status ?? "pending",
+    ocrStatus: registration.ocr_status ?? "pending",
+    failure: registration.failure ?? null,
+    draft,
+    draftRevision: Number(registration.draft_revision ?? draft?.revision ?? 0),
+    imageIdentity: registration.image_identity ?? null,
+    imageIdentities: registration.image_identities ?? (registration.image_identity ? [registration.image_identity] : []),
+    pages,
+    pageUrls: pages.map((page) => page.image_url ? `${API_BASE_URL}${page.image_url}` : null),
+    pageUrl: pages[0]?.image_url ? `${API_BASE_URL}${pages[0].image_url}` : null,
+    correlationId: registration.correlation_id ?? null,
   };
 }
 
@@ -224,7 +248,8 @@ async function request(path, options = {}) {
     let detail = `${response.status} ${response.statusText}`;
     try {
       const data = await response.json();
-      detail = data.detail ?? detail;
+      const responseDetail = data.detail ?? data;
+      detail = typeof responseDetail === "string" ? responseDetail : JSON.stringify(responseDetail);
     } catch {
       // Keep HTTP status text when the server does not return JSON.
     }
@@ -255,15 +280,35 @@ export async function fetchDashboardData() {
   };
 }
 
-export async function uploadTemplateRegistration(formTypeId, files) {
-  return request(`/api/template-registrations?form_type_id=${encodeURIComponent(formTypeId)}`, {
+export async function uploadTemplateRegistration(formTypeId, files, preprocessingPolicy = "auto") {
+  return request(`/api/template-registrations?form_type_id=${encodeURIComponent(formTypeId)}&preprocessing_policy=${encodeURIComponent(preprocessingPolicy)}`, {
     method: "POST",
     body: fileFormData(files),
   });
 }
 
 export async function approveTemplateRegistration(registrationId) {
-  return request(`/api/template-registrations/${encodeURIComponent(registrationId)}/approve`, {
+  return request(`/api/v1/template-registrations/${encodeURIComponent(registrationId)}/approve`, {
+    method: "POST",
+  });
+}
+
+export async function fetchTemplateRegistration(registrationId) {
+  const registration = await request(`/api/v1/template-registrations/${encodeURIComponent(registrationId)}`);
+  return adaptRegistration(registration);
+}
+
+export async function saveTemplateRegistrationDraft(registrationId, draft) {
+  const registration = await request(`/api/v1/template-registrations/${encodeURIComponent(registrationId)}/draft`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(draft),
+  });
+  return adaptRegistration(registration);
+}
+
+export async function validateTemplateRegistration(registrationId) {
+  return request(`/api/v1/template-registrations/${encodeURIComponent(registrationId)}/validate`, {
     method: "POST",
   });
 }

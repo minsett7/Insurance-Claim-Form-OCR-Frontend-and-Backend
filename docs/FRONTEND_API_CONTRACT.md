@@ -1,6 +1,6 @@
 # FormFlow OCR Frontend API Contract
 
-This document separates the API used by the current prototype from the target API expected by the production UI.
+This document separates the optional standalone prototype API from the canonical orchestrator API used by the umbrella production UI.
 
 ## Current Prototype Compatibility
 
@@ -21,7 +21,7 @@ The frontend currently works with the FastAPI service in `backend/api/app.py`:
 
 The compatibility layer is isolated in `frontend/src/api.js`.
 
-Template bounding boxes are temporarily cached in browser storage. The current backend stores field keys but does not store regions. Document uploads are matched in the frontend before calling the current endpoint because it still requires a `template_id`.
+The standalone prototype retains its compatibility behavior. In the umbrella stack, template regions are persisted by the orchestrator and browser storage is not authoritative.
 
 ## Shared Coordinate Format
 
@@ -38,7 +38,7 @@ All template and document regions should use normalized page coordinates:
 
 Values are relative to the page and remain between `0` and `1`. Each region must also include a `page` number.
 
-## Target Template Registration Contract
+## Canonical Template Registration Contract
 
 ### Create registration job
 
@@ -51,16 +51,17 @@ Multipart fields:
 - `form_type_id`
 - `language`
 - `version_note` (optional)
+- `preprocessing_policy`: `auto`, `force`, or `none` (optional)
 
 Response:
 
 ```json
 {
   "id": "REG-00125",
-  "status": "analyzing",
+  "status": "validating",
   "progress": {
-    "stage": "detect_regions",
-    "percent": 48
+    "stage": "upload_validation",
+    "percent": 5
   }
 }
 ```
@@ -79,25 +80,63 @@ The response should include:
 - Detection, label, and semantic-mapping confidence
 - Model provenance
 
+For multi-page drafts, page metadata and regions are related by the one-based `page_number` / `page`
+pair:
+
+```json
+{
+  "draft": {
+    "pages": [
+      {
+        "page_id": "page_001",
+        "page_number": 1,
+        "width": 1200,
+        "height": 1600,
+        "image_url": "/api/v1/template-registrations/REG-00125/pages/1"
+      },
+      {
+        "page_id": "page_002",
+        "page_number": 2,
+        "width": 1200,
+        "height": 1600,
+        "image_url": "/api/v1/template-registrations/REG-00125/pages/2"
+      }
+    ],
+    "regions": [
+      {"id": "region_page_001_0012", "page": 1, "bbox": {"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.04}},
+      {"id": "region_page_002_0008", "page": 2, "bbox": {"x": 0.2, "y": 0.4, "width": 0.35, "height": 0.05}}
+    ]
+  }
+}
+```
+
+The page image endpoint is `GET /api/v1/template-registrations/{id}/pages/{page_number}`.
+It returns the stored canonical PNG for that page and returns 404 for an unknown page.
+
 Region shape:
 
 ```json
 {
-  "id": "region-12",
+  "id": "region_page_001_region_0012",
+  "field_id": "field_vehicle_type_truck",
   "page": 1,
-  "key": "policyNumber",
+  "key": "vehicle_type_truck",
   "label": "Policy Number",
-  "data_type": "identifier",
+  "data_type": "multiple_choice",
   "language": "my-en",
-  "extraction_mode": "printed",
+  "extraction_mode": "checkbox",
   "required": true,
   "confidence": 0.94,
   "bbox": {
-    "x": 0.57,
-    "y": 0.125,
-    "width": 0.32,
-    "height": 0.045
-  }
+    "x": 0.438,
+    "y": 0.588,
+    "width": 0.024,
+    "height": 0.020
+  },
+  "source_region_ids": ["region_page_001_region_0012"],
+  "review_flags": [],
+  "enabled": true,
+  "geometry_source": "PP-DocLayoutV3"
 }
 ```
 
@@ -106,6 +145,28 @@ Region shape:
 `PUT /api/v1/template-registrations/{id}/draft`
 
 The request should replace the complete editable region set and include a draft revision. The API should reject stale revisions with `409 Conflict`.
+
+The complete authoritative region-ID set must remain present. Reviewers may disable a non-actionable region or explicitly correct its geometry, but the UI must not invent, duplicate, or silently delete detector regions.
+
+Selecting a page is a frontend view operation, not a draft mutation. The save request must contain
+regions from every page, including pages that are not currently visible. Field IDs and keys must
+be unique across the whole template, not merely within one page.
+
+## How the multi-page editor is constructed
+
+1. `src/api.js` adapts `draft.pages` to ordered page metadata and absolute `pageUrls` while
+   retaining the complete backend draft.
+2. `TemplateWorkspace.jsx` keeps one `regions` state array for the entire form and a separate
+   `selectedPageNumber` for navigation.
+3. `visibleRegions` filters that full array for display on the selected canonical image.
+4. A page-local drag/edit is merged back into the full array by stable region ID.
+5. `templateEditorModel.js` converts normalized backend regions to editor objects and back without
+   changing their page ownership or authoritative detector metadata.
+6. Save serializes the complete array with the current `draft_revision`; validate and approve run
+   only after that save succeeds.
+
+This split prevents a common multi-page data-loss bug: replacing the server draft with only the
+regions visible on the currently selected page.
 
 ### Validate and approve
 
@@ -190,4 +251,3 @@ Audit events should be immutable and include:
 - UTC timestamp
 
 The UI expects audit events in newest-first order or with a stable sortable timestamp.
-

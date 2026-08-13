@@ -32,6 +32,7 @@ import {
   approveTemplateRegistration,
   deleteDocument as deleteBackendDocument,
   downloadBackendFile,
+  fetchTemplateRegistration,
   fetchDashboardData,
   saveDocumentFields,
   updateDocumentStatus as updateBackendDocumentStatus,
@@ -314,6 +315,23 @@ export default function App() {
     }
   }
 
+  async function refreshRegistration(jobId, { quiet = false } = {}) {
+    try {
+      const registration = await fetchTemplateRegistration(jobId);
+      setRegistrations((current) => {
+        const exists = current.some((item) => item.id === jobId);
+        return exists
+          ? current.map((item) => item.id === jobId ? registration : item)
+          : [registration, ...current];
+      });
+      setSelectedRegistrationId(jobId);
+      return registration;
+    } catch (error) {
+      if (!quiet) setApiError(`Could not refresh template registration. ${error.message}`);
+      throw error;
+    }
+  }
+
   async function saveRegistrationFields(jobId, fields) {
     setApiBusy(true);
     setApiError("");
@@ -366,7 +384,7 @@ export default function App() {
 
         <div className="workspace-content">
           {activePage === APP_ROUTES.WORK_QUEUE && <WorkQueuePage stats={stats} registrations={registrations} documents={documents} onRefresh={() => { setActionMessage(""); refreshData(); }} setActivePage={navigate} />}
-          {activePage === APP_ROUTES.TEMPLATES && <TemplateWorkspace templates={templates} registrations={registrations} selectedRegistration={selectedRegistration} selectedRegistrationId={selectedRegistrationId} setSelectedRegistrationId={setSelectedRegistrationId} approveRegistration={approveRegistration} refreshData={refreshData} saveRegistrationFields={saveRegistrationFields} setApiError={setApiError} formTypes={FORM_TYPES} getFormType={getFormType} getRegistrationFields={getRegistrationFields} />}
+          {activePage === APP_ROUTES.TEMPLATES && <TemplateWorkspace templates={templates} registrations={registrations} selectedRegistration={selectedRegistration} selectedRegistrationId={selectedRegistrationId} setSelectedRegistrationId={setSelectedRegistrationId} approveRegistration={approveRegistration} refreshData={refreshData} refreshRegistration={refreshRegistration} saveRegistrationFields={saveRegistrationFields} setApiError={setApiError} formTypes={FORM_TYPES} getFormType={getFormType} getRegistrationFields={getRegistrationFields} />}
           {activePage === APP_ROUTES.PROCESS && <DocumentWorkspace documents={documents} templates={templates} selectedDocument={selectedDocument} selectedDocumentId={selectedDocumentId} setSelectedDocumentId={setSelectedDocumentId} updateDocumentField={updateDocumentField} saveSelectedDocumentCorrections={saveSelectedDocumentCorrections} setDocumentStatus={setDocumentStatus} syncSelectedDocument={() => setDocumentStatus("Synced")} deleteDocument={deleteDocument} refreshData={refreshData} setApiError={setApiError} fieldLibrary={FIELD_LIBRARY} fieldGroups={FIELD_GROUPS} validateDocument={validateDocument} getFormType={getFormType} />}
           {activePage === APP_ROUTES.RECORDS && <RecordsWorkspace documents={documents} templates={templates} auditEvents={auditEvents} recordSearch={recordSearch} setRecordSearch={setRecordSearch} selectedDocumentId={selectedDocumentId} setSelectedDocumentId={setSelectedDocumentId} setActivePage={navigate} getFormType={getFormType} formatAmount={formatAmount} />}
           {activePage === APP_ROUTES.REPORTS && <ExportHub documents={documents} downloadExport={downloadExport} />}

@@ -22,15 +22,18 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { uploadTemplateRegistration } from "./api";
+import {
+  saveTemplateRegistrationDraft,
+  uploadTemplateRegistration,
+  validateTemplateRegistration,
+} from "./api";
 import { TEMPLATE_PIPELINE } from "./productModel";
 import {
   EXTRACTION_MODES,
   FIELD_TYPES,
-  createBlankRegion,
   createDetectedRegions,
+  editorRegionToDraft,
   loadRegions,
-  saveRegions,
   validateRegions,
 } from "./templateEditorModel";
 
@@ -62,6 +65,7 @@ export default function TemplateWorkspace({
   setSelectedRegistrationId,
   approveRegistration,
   refreshData,
+  refreshRegistration,
   saveRegistrationFields,
   setApiError,
   formTypes,
@@ -81,14 +85,23 @@ export default function TemplateWorkspace({
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
   const [showUpload, setShowUpload] = useState(!registrations.length);
+  const [serverValidationErrors, setServerValidationErrors] = useState([]);
+  const [selectedPageNumber, setSelectedPageNumber] = useState(1);
 
   const selectedTemplate = selectedRegistration
     ? templates.find((template) => template.id === selectedRegistration.templateId)
     : null;
-  const readOnly = selectedRegistration?.status === "Registered";
-  const selectedRegion = regions.find((region) => region.id === selectedRegionId) ?? null;
+  const readOnly = selectedRegistration?.rawStatus === "registered";
+  const reviewable = selectedRegistration?.rawStatus === "needs_approval";
+  const hasDraft = Boolean(selectedRegistration?.draft);
+  const draftPages = selectedRegistration?.pages ?? [];
+  const selectedPage = draftPages.find((page) => Number(page.page_number) === selectedPageNumber) ?? draftPages[0] ?? null;
+  const selectedPageIndex = Math.max(0, draftPages.findIndex((page) => Number(page.page_number) === selectedPageNumber));
+  const selectedPageUrl = selectedRegistration?.pageUrls?.[selectedPageIndex] ?? selectedRegistration?.pageUrl ?? previewUrls[selectedRegistration?.id];
+  const visibleRegions = regions.filter((region) => Number(region.page ?? 1) === selectedPageNumber);
+  const selectedRegion = visibleRegions.find((region) => region.id === selectedRegionId) ?? null;
   const validationIssues = useMemo(() => validateRegions(regions), [regions]);
-  const lowConfidenceCount = regions.filter((region) => Number(region.confidence) < 0.75).length;
+  const lowConfidenceCount = visibleRegions.filter((region) => Number(region.confidence) < 0.75).length;
   const filteredRegistrations = registrations.filter((registration) => {
     const query = registrySearch.trim().toLowerCase();
     if (!query) return true;
@@ -104,51 +117,66 @@ export default function TemplateWorkspace({
       setSelectedRegionId("");
       return;
     }
-    const nextRegions = loadRegions(selectedRegistration.id, getRegistrationFields(selectedRegistration));
+    const nextRegions = loadRegions(
+      selectedRegistration.id,
+      getRegistrationFields(selectedRegistration),
+      selectedRegistration.draft,
+    );
     setRegions(nextRegions);
-    setSelectedRegionId(nextRegions[0]?.id ?? "");
+    const firstPageNumber = Number(selectedRegistration.pages?.[0]?.page_number ?? nextRegions[0]?.page ?? 1);
+    setSelectedPageNumber(firstPageNumber);
+    setSelectedRegionId(nextRegions.find((region) => Number(region.page ?? 1) === firstPageNumber)?.id ?? "");
     setDirty(false);
     setSavedAt(null);
+    setServerValidationErrors([]);
     setTool("select");
-  }, [selectedRegistration?.id]);
+  }, [selectedRegistration?.id, selectedRegistration?.draftRevision]);
+
+  useEffect(() => {
+    if (!visibleRegions.some((region) => region.id === selectedRegionId)) {
+      setSelectedRegionId(visibleRegions[0]?.id ?? "");
+    }
+  }, [selectedPageNumber, selectedRegistration?.id]);
+
+  useEffect(() => {
+    if (!selectedRegistration || ["registered", "needs_approval", "needs_resubmission", "failed"].includes(selectedRegistration.rawStatus)) return undefined;
+    const timer = window.setInterval(() => {
+      refreshRegistration(selectedRegistration.id, { quiet: true }).catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [selectedRegistration?.id, selectedRegistration?.rawStatus, refreshRegistration]);
 
   function commitRegions(nextRegions) {
     setRegions(nextRegions);
     setDirty(true);
   }
 
+  function commitVisibleRegions(nextVisibleRegions) {
+    const updatedById = new Map(nextVisibleRegions.map((region) => [region.id, region]));
+    commitRegions(regions.map((region) => updatedById.get(region.id) ?? region));
+  }
+
   function updateRegion(id, changes) {
-    if (readOnly) return;
+    if (readOnly || !reviewable) return;
     commitRegions(regions.map((region) => (region.id === id ? { ...region, ...changes } : region)));
   }
 
   function deleteRegion(id = selectedRegionId) {
-    if (!id || readOnly) return;
-    const index = regions.findIndex((region) => region.id === id);
-    const next = regions.filter((region) => region.id !== id);
-    commitRegions(next);
-    setSelectedRegionId(next[Math.max(0, index - 1)]?.id ?? "");
+    if (!id || readOnly || !reviewable) return;
+    updateRegion(id, { enabled: false, reviewFlags: [] });
   }
 
   function duplicateRegion() {
-    if (!selectedRegion || readOnly) return;
-    const clone = {
-      ...selectedRegion,
-      id: `region-${Date.now()}-copy`,
-      key: `${selectedRegion.key}Copy`,
-      label: `${selectedRegion.label} copy`,
-      x: Math.min(selectedRegion.x + 0.02, 1 - selectedRegion.width),
-      y: Math.min(selectedRegion.y + 0.02, 1 - selectedRegion.height),
-    };
-    commitRegions([...regions, clone]);
-    setSelectedRegionId(clone.id);
+    // Region IDs and geometry originate in PP-DocLayoutV3 and cannot be invented.
   }
 
   function resetDetections() {
-    if (!selectedRegistration || readOnly) return;
-    const next = createDetectedRegions(getRegistrationFields(selectedRegistration));
+    if (!selectedRegistration || readOnly || !reviewable) return;
+    const next = loadRegions(selectedRegistration.id, [], selectedRegistration.draft);
     commitRegions(next);
-    setSelectedRegionId(next[0]?.id ?? "");
+    setSelectedRegionId(
+      next.find((region) => Number(region.page ?? 1) === selectedPageNumber)?.id ?? ""
+    );
   }
 
   async function uploadTemplateFiles(event) {
@@ -187,30 +215,33 @@ export default function TemplateWorkspace({
   }
 
   async function saveDraft() {
-    if (!selectedRegistration || readOnly) return;
+    if (!selectedRegistration || readOnly || !reviewable) return null;
     setSaving(true);
-    saveRegions(selectedRegistration.id, regions);
-    const fieldKeys = [...new Set(regions.map((region) => region.key).filter(Boolean))];
     try {
-      await saveRegistrationFields(selectedRegistration.id, fieldKeys);
+      const saved = await saveTemplateRegistrationDraft(selectedRegistration.id, {
+        revision: selectedRegistration.draftRevision,
+        regions: regions.map(editorRegionToDraft),
+      });
+      await refreshRegistration(selectedRegistration.id, { quiet: true });
       setDirty(false);
       setSavedAt(new Date());
+      return saved;
+    } catch (error) {
+      setApiError(`Could not save template draft. ${error.message}`);
+      return null;
     } finally {
       setSaving(false);
     }
   }
 
   async function approveDraft() {
-    if (!selectedRegistration || validationIssues.length || readOnly) return;
-    await saveDraft();
+    if (!selectedRegistration || validationIssues.length || readOnly || !reviewable) return;
+    const saved = await saveDraft();
+    if (!saved) return;
+    const validation = await validateTemplateRegistration(selectedRegistration.id);
+    setServerValidationErrors(validation.errors ?? []);
+    if (!validation.valid) return;
     await approveRegistration(selectedRegistration.id);
-  }
-
-  function addDrawnRegion(geometry) {
-    const nextRegion = createBlankRegion(geometry, regions.length);
-    commitRegions([...regions, nextRegion]);
-    setSelectedRegionId(nextRegion.id);
-    setTool("select");
   }
 
   return (
@@ -316,38 +347,52 @@ export default function TemplateWorkspace({
               <div className="editor-header">
                 <div className="editor-title">
                   <div>
-                    <span className="section-label">{readOnly ? "Approved template" : "Human review"}</span>
+                    <span className="section-label">{readOnly ? "Approved template" : reviewable ? "Human review" : "Processing template"}</span>
                     <h2>{selectedRegistration.fileName}</h2>
                     <p>{getFormType(selectedRegistration.formTypeId).label} · {selectedRegistration.id} · {regions.length} regions</p>
                   </div>
                   <span className={`mini-status ${statusClass(selectedRegistration.status)}`}>{selectedRegistration.status}</span>
                 </div>
                 <div className="editor-save-state">
-                  {!readOnly && <span>{dirty ? "Unsaved changes" : savedAt ? `Saved ${humanTime(savedAt)}` : "Draft loaded"}</span>}
-                  <button className="button secondary" type="button" disabled={!dirty || saving || readOnly} onClick={saveDraft}>
+                  {reviewable && <span>{dirty ? "Unsaved changes" : savedAt ? `Saved ${humanTime(savedAt)}` : "Draft loaded"}</span>}
+                  <button className="button secondary" type="button" disabled={!dirty || saving || !reviewable} onClick={saveDraft}>
                     {saving ? <Loader2 size={16} /> : <Save size={16} />} Save draft
                   </button>
-                  <button className="button primary" type="button" disabled={readOnly || validationIssues.length > 0 || saving} onClick={approveDraft}>
+                  <button className="button primary" type="button" disabled={!reviewable || validationIssues.length > 0 || saving} onClick={approveDraft}>
                     <CheckCircle2 size={16} /> Approve template
                   </button>
                 </div>
               </div>
 
-              <TemplateProgress approved={readOnly} />
+              <TemplateProgress registration={selectedRegistration} />
 
+              {!hasDraft ? (
+                <RegistrationState registration={selectedRegistration} onRefresh={() => refreshRegistration(selectedRegistration.id)} />
+              ) : (<>
+              <DraftWarnings registration={selectedRegistration} serverErrors={serverValidationErrors} />
               <div className="editor-toolbar">
+                {draftPages.length > 1 && (
+                  <div className="tool-group page-tools" aria-label="Template pages">
+                    {draftPages.map((page) => (
+                      <button
+                        className={Number(page.page_number) === selectedPageNumber ? "active" : ""}
+                        type="button"
+                        key={page.page_id}
+                        onClick={() => setSelectedPageNumber(Number(page.page_number))}
+                      >
+                        Page {page.page_number}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="tool-group">
                   <button className={tool === "select" ? "active" : ""} type="button" onClick={() => setTool("select")} title="Select and move">
                     <MousePointer2 size={16} /> Select
                   </button>
-                  <button className={tool === "draw" ? "active" : ""} type="button" onClick={() => setTool("draw")} disabled={readOnly} title="Draw a new field">
-                    <SquareDashedMousePointer size={16} /> Add field
-                  </button>
                 </div>
                 <div className="tool-group">
-                  <button type="button" onClick={duplicateRegion} disabled={!selectedRegion || readOnly} title="Duplicate selected region"><Copy size={16} /></button>
-                  <button type="button" onClick={() => deleteRegion()} disabled={!selectedRegion || readOnly} title="Delete selected region"><Trash2 size={16} /></button>
-                  <button type="button" onClick={resetDetections} disabled={readOnly} title="Restore automatic detections"><RefreshCw size={16} /></button>
+                  <button type="button" onClick={() => deleteRegion()} disabled={!selectedRegion || !reviewable || selectedRegion?.enabled === false} title="Disable selected authoritative region"><Trash2 size={16} /> Disable</button>
+                  <button type="button" onClick={resetDetections} disabled={!reviewable} title="Restore the persisted detector draft"><RefreshCw size={16} /></button>
                 </div>
                 <div className="tool-group zoom-tools">
                   <button type="button" onClick={() => setZoom((value) => Math.max(55, value - 10))} title="Zoom out"><ZoomOut size={16} /></button>
@@ -361,14 +406,13 @@ export default function TemplateWorkspace({
                 <aside className="field-region-list">
                   <div className="region-list-heading">
                     <div><strong>Detected fields</strong><small>{lowConfidenceCount} need attention</small></div>
-                    <button type="button" onClick={() => setTool("draw")} disabled={readOnly}><Plus size={16} /></button>
                   </div>
                   <div className="region-scroll">
-                    {regions.map((region, index) => {
+                    {visibleRegions.map((region, index) => {
                       const issues = validationIssues.filter((issue) => issue.regionId === region.id);
                       return (
                         <button
-                          className={`region-list-item ${region.id === selectedRegionId ? "active" : ""} ${issues.length ? "has-issue" : ""}`}
+                          className={`region-list-item ${region.id === selectedRegionId ? "active" : ""} ${issues.length ? "has-issue" : ""} ${region.enabled === false ? "disabled" : ""}`}
                           type="button"
                           key={region.id}
                           onClick={() => { setSelectedRegionId(region.id); setTool("select"); }}
@@ -381,27 +425,26 @@ export default function TemplateWorkspace({
                       );
                     })}
                   </div>
-                  <button className="add-region-row" type="button" disabled={readOnly} onClick={() => setTool("draw")}>
-                    <Plus size={15} /> Draw new field
-                  </button>
+                  <div className="add-region-row authoritative-note">Geometry is owned by PP-DocLayoutV3</div>
                 </aside>
 
                 <section className="template-canvas-area">
                   <div className="canvas-instruction">
-                    {tool === "draw" ? <><SquareDashedMousePointer size={15} /> Drag on the document to create a field</> : <><Move size={15} /> Select a box to move or resize it</>}
+                    <><Move size={15} /> Select a box to review or explicitly correct its geometry</>
                   </div>
                   <div className="canvas-scroll">
                     <TemplateCanvas
-                      regions={regions}
+                      regions={visibleRegions}
                       selectedRegionId={selectedRegionId}
                       setSelectedRegionId={setSelectedRegionId}
-                      commitRegions={commitRegions}
+                      commitRegions={commitVisibleRegions}
                       tool={tool}
                       zoom={zoom}
-                      readOnly={readOnly}
-                      previewUrl={previewUrls[selectedRegistration.id]}
+                      readOnly={readOnly || !reviewable}
+                      previewUrl={selectedPageUrl}
                       title={getFormType(selectedRegistration.formTypeId).label}
-                      onDraw={addDrawnRegion}
+                      page={selectedPage}
+                      pageCount={draftPages.length || 1}
                     />
                   </div>
                 </section>
@@ -409,11 +452,12 @@ export default function TemplateWorkspace({
                 <FieldInspector
                   region={selectedRegion}
                   issues={validationIssues.filter((issue) => issue.regionId === selectedRegionId)}
-                  readOnly={readOnly}
+                  readOnly={readOnly || !reviewable}
                   onChange={(changes) => updateRegion(selectedRegionId, changes)}
                   onDelete={() => deleteRegion()}
                 />
               </div>
+              </>)}
             </>
           )}
         </main>
@@ -422,12 +466,26 @@ export default function TemplateWorkspace({
   );
 }
 
-function TemplateProgress({ approved }) {
+const STAGE_INDEX = {
+  upload_validation: 0,
+  preprocessing: 1,
+  capture_quality: 1,
+  layout_and_ocr: 2,
+  contract_validation: 3,
+  semantic_mapping: 4,
+  vlm_poll: 4,
+  relationship_validation: 4,
+  human_review: 5,
+};
+
+function TemplateProgress({ registration }) {
+  const approved = registration.rawStatus === "registered";
+  const activeIndex = approved ? 6 : (STAGE_INDEX[registration.progress?.stage] ?? 0);
   return (
     <div className="template-progress" aria-label="Template processing progress">
       {TEMPLATE_PIPELINE.map((stage, index) => {
-        const complete = approved || index < TEMPLATE_PIPELINE.length - 2;
-        const active = !approved && index === TEMPLATE_PIPELINE.length - 2;
+        const complete = approved || index < activeIndex;
+        const active = !approved && index === activeIndex;
         return (
           <div className={`${complete ? "complete" : ""} ${active ? "active" : ""}`} key={stage}>
             <span>{complete ? <Check size={12} /> : index + 1}</span>
@@ -435,6 +493,45 @@ function TemplateProgress({ approved }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function RegistrationState({ registration, onRefresh }) {
+  const retake = registration.rawStatus === "needs_resubmission";
+  const failed = registration.rawStatus === "failed";
+  const details = retake
+    ? registration.preprocessing?.reasons ?? []
+    : failed
+      ? [registration.failure?.message ?? "Template registration failed."]
+      : [];
+  return (
+    <div className={`registration-state ${retake || failed ? "blocked" : "running"}`}>
+      <span>{retake || failed ? <AlertCircle size={26} /> : <Loader2 size={26} />}</span>
+      <div>
+        <span className="section-label">{retake ? "New capture required" : failed ? "Processing stopped" : "Pipeline running"}</span>
+        <h3>{registration.progress?.message ?? registration.status}</h3>
+        <p>{registration.progress?.percent ?? 0}% complete · Layout {registration.layoutStatus} · OCR {registration.ocrStatus}</p>
+        {details.map((detail) => <small key={detail}>{String(detail).replace(/_/g, " ")}</small>)}
+        {(registration.preprocessing?.instructions ?? []).map((instruction) => <small key={instruction}>{instruction}</small>)}
+      </div>
+      <button className="button secondary" type="button" onClick={onRefresh}><RefreshCw size={16} /> Refresh</button>
+    </div>
+  );
+}
+
+function DraftWarnings({ registration, serverErrors }) {
+  const warnings = registration.draft?.warnings ?? [];
+  if (!warnings.length && !serverErrors.length) return null;
+  return (
+    <div className="draft-warning-panel">
+      <div><AlertCircle size={17} /><strong>{serverErrors.length ? "Approval is blocked" : "Review notes"}</strong></div>
+      {serverErrors.map((error) => <p key={error}>{error}</p>)}
+      {warnings.map((warning, index) => (
+        <p key={typeof warning === "string" ? warning : `${warning.code}-${index}`}>
+          {typeof warning === "string" ? warning : `${warning.code}: ${warning.message}`}
+        </p>
+      ))}
     </div>
   );
 }
@@ -449,11 +546,14 @@ function TemplateCanvas({
   readOnly,
   previewUrl,
   title,
-  onDraw,
+  page,
+  pageCount,
 }) {
   const svgRef = useRef(null);
   const interaction = useRef(null);
   const [draftBox, setDraftBox] = useState(null);
+  const pageWidth = Number(page?.width ?? 1000);
+  const pageHeight = Number(page?.height ?? 1414);
 
   function eventPoint(event) {
     const bounds = svgRef.current.getBoundingClientRect();
@@ -536,7 +636,6 @@ function TemplateCanvas({
   function endInteraction(event) {
     const action = interaction.current;
     if (!action) return;
-    if (action.kind === "draw" && draftBox?.width >= 0.025 && draftBox?.height >= 0.012) onDraw(draftBox);
     interaction.current = null;
     setDraftBox(null);
     if (svgRef.current.hasPointerCapture(event.pointerId)) svgRef.current.releasePointerCapture(event.pointerId);
@@ -544,12 +643,12 @@ function TemplateCanvas({
 
   return (
     <div className="template-page-frame" style={{ width: `${zoom}%` }}>
-      <div className="template-paper">
+      <div className="template-paper" style={{ aspectRatio: `${pageWidth} / ${pageHeight}` }}>
         {previewUrl ? <img className="template-source-image" src={previewUrl} alt="Uploaded blank form" /> : <TemplatePaperMock title={title} />}
         <svg
           className={`region-overlay tool-${tool}`}
           ref={svgRef}
-          viewBox="0 0 1000 1414"
+          viewBox={`0 0 ${pageWidth} ${pageHeight}`}
           preserveAspectRatio="none"
           onPointerDown={beginDraw}
           onPointerMove={handlePointerMove}
@@ -560,12 +659,12 @@ function TemplateCanvas({
         >
           {regions.map((region, index) => {
             const selected = region.id === selectedRegionId;
-            const x = region.x * 1000;
-            const y = region.y * 1414;
-            const width = region.width * 1000;
-            const height = region.height * 1414;
+            const x = region.x * pageWidth;
+            const y = region.y * pageHeight;
+            const width = region.width * pageWidth;
+            const height = region.height * pageHeight;
             return (
-              <g className={`region-box ${selected ? "selected" : ""} ${region.confidence < 0.75 ? "low" : ""}`} key={region.id}>
+              <g className={`region-box ${selected ? "selected" : ""} ${region.confidence < 0.75 ? "low" : ""} ${region.enabled === false ? "disabled" : ""}`} key={region.id}>
                 <rect x={x} y={y} width={width} height={height} rx="3" onPointerDown={(event) => beginMove(event, region)} />
                 <text x={x + 6} y={Math.max(14, y - 7)}>{index + 1}. {region.label}</text>
                 {selected && !readOnly && [
@@ -579,15 +678,15 @@ function TemplateCanvas({
           {draftBox && (
             <rect
               className="draft-region"
-              x={draftBox.x * 1000}
-              y={draftBox.y * 1414}
-              width={draftBox.width * 1000}
-              height={draftBox.height * 1414}
+              x={draftBox.x * pageWidth}
+              y={draftBox.y * pageHeight}
+              width={draftBox.width * pageWidth}
+              height={draftBox.height * pageHeight}
             />
           )}
         </svg>
       </div>
-      <span className="page-number">Page 1 of 1</span>
+      <span className="page-number">Page {page?.page_number ?? 1} of {pageCount}</span>
     </div>
   );
 }
@@ -640,13 +739,23 @@ function FieldInspector({ region, issues, readOnly, onChange, onDelete }) {
       )}
 
       <div className="inspector-form">
+        <label className="required-toggle"><input type="checkbox" checked={region.enabled !== false} disabled={readOnly} onChange={(event) => onChange({ enabled: event.target.checked })} /><span>Include this detected region</span></label>
         <label><span>Display label</span><input value={region.label} disabled={readOnly} onChange={(event) => onChange({ label: event.target.value })} /></label>
-        <label><span>Field key</span><input value={region.key} disabled={readOnly} onChange={(event) => onChange({ key: event.target.value.replace(/[^\p{L}\p{N}_]/gu, "") })} /></label>
+        <label><span>Field ID</span><input value={region.fieldId} disabled={readOnly} onChange={(event) => onChange({ fieldId: event.target.value.replace(/[^A-Za-z0-9_-]/g, "") })} /></label>
+        <label><span>Field key</span><input value={region.key} disabled={readOnly} onChange={(event) => onChange({ key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") })} /></label>
         <label><span>Data type</span><select value={region.type} disabled={readOnly} onChange={(event) => onChange({ type: event.target.value })}>{FIELD_TYPES.map((type) => <option value={type.value} key={type.value}>{type.label}</option>)}</select></label>
         <label><span>Language</span><select value={region.language} disabled={readOnly} onChange={(event) => onChange({ language: event.target.value })}><option value="my-en">Burmese + English</option><option value="my">Burmese</option><option value="en">English</option></select></label>
         <label><span>Extraction method</span><select value={region.extractionMode} disabled={readOnly} onChange={(event) => onChange({ extractionMode: event.target.value })}>{EXTRACTION_MODES.map((mode) => <option value={mode.value} key={mode.value}>{mode.label}</option>)}</select></label>
         <label className="required-toggle"><input type="checkbox" checked={region.required} disabled={readOnly} onChange={(event) => onChange({ required: event.target.checked })} /><span>Required field</span></label>
       </div>
+
+      {(region.reviewFlags ?? []).length > 0 && (
+        <div className="review-flags-card">
+          <strong>Model review flags</strong>
+          {region.reviewFlags.map((flag) => <p key={flag}>{flag}</p>)}
+          {!readOnly && <button className="button secondary" type="button" onClick={() => onChange({ reviewFlags: [] })}><Check size={14} /> Mark reviewed</button>}
+        </div>
+      )}
 
       <div className="coordinates-card">
         <span>Normalized coordinates</span>
@@ -654,7 +763,7 @@ function FieldInspector({ region, issues, readOnly, onChange, onDelete }) {
         <div><small>W</small><strong>{region.width.toFixed(3)}</strong><small>H</small><strong>{region.height.toFixed(3)}</strong></div>
       </div>
 
-      {!readOnly && <button className="delete-field-button" type="button" onClick={onDelete}><Trash2 size={15} /> Delete field</button>}
+      {!readOnly && region.enabled !== false && <button className="delete-field-button" type="button" onClick={onDelete}><Trash2 size={15} /> Disable field</button>}
     </aside>
   );
 }
