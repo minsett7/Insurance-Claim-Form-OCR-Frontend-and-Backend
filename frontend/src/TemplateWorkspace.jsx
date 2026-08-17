@@ -3,7 +3,9 @@ import {
   AlertCircle,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   CloudUpload,
   Copy,
   FileText,
@@ -21,6 +23,7 @@ import {
   Trash2,
   ZoomIn,
   ZoomOut,
+  X,
 } from "lucide-react";
 import {
   createFormCategory,
@@ -62,6 +65,23 @@ function humanTime(date) {
   return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+function humanFieldName(region) {
+  const label = String(region.label ?? "").trim();
+  if (label && !/^field\s*\d+$/i.test(label)) return label;
+  return String(region.key ?? region.fieldId ?? "Detected field")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function describeReviewMessage(item) {
+  const code = typeof item === "object" ? item.code : "";
+  const message = typeof item === "string" ? item : item.message;
+  if (/GEOMETRY_FALLBACK/i.test(`${code} ${message}`)) {
+    return { title: "Field location needs verification", message: "We detected this field from its layout, but could not confidently identify it.", technical: code || message };
+  }
+  return { title: "Review needed", message: message || "This field needs a quick review before approval.", technical: code };
+}
+
 export default function TemplateWorkspace({
   templates,
   registrations,
@@ -101,6 +121,10 @@ export default function TemplateWorkspace({
   const [metadataDescription, setMetadataDescription] = useState("");
   const [metadataCategoryId, setMetadataCategoryId] = useState("");
   const [metadataSaving, setMetadataSaving] = useState(false);
+  const [showTemplateDetails, setShowTemplateDetails] = useState(false);
+  const [showIssues, setShowIssues] = useState(false);
+  const [fieldFilter, setFieldFilter] = useState("needs-review");
+  const [inspectorOpen, setInspectorOpen] = useState(false);
 
   const selectedTemplate = selectedRegistration
     ? templates.find((template) => template.id === selectedRegistration.templateId)
@@ -116,7 +140,11 @@ export default function TemplateWorkspace({
   const visibleRegions = regions.filter((region) => Number(region.page ?? 1) === selectedPageNumber);
   const selectedRegion = visibleRegions.find((region) => region.id === selectedRegionId) ?? null;
   const validationIssues = useMemo(() => validateRegions(regions), [regions]);
-  const lowConfidenceCount = visibleRegions.filter((region) => Number(region.confidence) < 0.75).length;
+  const regionIssueIds = useMemo(() => new Set(validationIssues.map((issue) => issue.regionId).filter(Boolean)), [validationIssues]);
+  const attentionRegions = visibleRegions.filter((region) => regionIssueIds.has(region.id) || Number(region.confidence) < 0.75);
+  const displayedRegions = fieldFilter === "needs-review" ? attentionRegions : visibleRegions;
+  const lowConfidenceCount = attentionRegions.length;
+  const reviewMessages = [...serverValidationErrors, ...(selectedRegistration?.draft?.warnings ?? [])].map(describeReviewMessage);
   const filteredRegistrations = registrations.filter((registration) => {
     const query = registrySearch.trim().toLowerCase();
     if (!query) return true;
@@ -140,7 +168,8 @@ export default function TemplateWorkspace({
     setRegions(nextRegions);
     const firstPageNumber = Number(selectedRegistration.pages?.[0]?.page_number ?? nextRegions[0]?.page ?? 1);
     setSelectedPageNumber(firstPageNumber);
-    setSelectedRegionId(nextRegions.find((region) => Number(region.page ?? 1) === firstPageNumber)?.id ?? "");
+    setSelectedRegionId("");
+    setInspectorOpen(false);
     setDirty(false);
     setSavedAt(null);
     setServerValidationErrors([]);
@@ -160,10 +189,19 @@ export default function TemplateWorkspace({
   }, [formTypes, formTypeId]);
 
   useEffect(() => {
-    if (!visibleRegions.some((region) => region.id === selectedRegionId)) {
-      setSelectedRegionId(visibleRegions[0]?.id ?? "");
+    if (selectedRegionId && !visibleRegions.some((region) => region.id === selectedRegionId)) {
+      setSelectedRegionId("");
+      setInspectorOpen(false);
     }
   }, [selectedPageNumber, selectedRegistration?.id]);
+
+  useEffect(() => {
+    if (!selectedRegionId) return;
+    window.requestAnimationFrame(() => {
+      document.getElementById(`template-field-${selectedRegionId}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      document.getElementById(`template-region-${selectedRegionId}`)?.scrollIntoView({ block: "center", inline: "center", behavior: "smooth" });
+    });
+  }, [selectedRegionId, selectedPageNumber]);
 
   useEffect(() => {
     if (!selectedRegistration || ["registered", "needs_approval", "needs_resubmission", "failed"].includes(selectedRegistration.rawStatus)) return undefined;
@@ -186,6 +224,22 @@ export default function TemplateWorkspace({
   function updateRegion(id, changes) {
     if (readOnly || !reviewable) return;
     commitRegions(regions.map((region) => (region.id === id ? { ...region, ...changes } : region)));
+  }
+
+  function selectRegion(id) {
+    setSelectedRegionId(id);
+    setInspectorOpen(Boolean(id));
+    setTool("select");
+  }
+
+  function confirmRegion(id) {
+    updateRegion(id, { reviewFlags: [] });
+    const next = attentionRegions.find((region) => region.id !== id);
+    if (next) selectRegion(next.id);
+    else {
+      setSelectedRegionId("");
+      setInspectorOpen(false);
+    }
   }
 
   function deleteRegion(id = selectedRegionId) {
@@ -480,27 +534,31 @@ export default function TemplateWorkspace({
             </div>
           ) : (
             <>
-              <div className="editor-header">
+              <div className="editor-header compact-review-toolbar">
                 <div className="editor-title">
                   <div>
                     <span className="section-label">{readOnly ? "Approved template" : reviewable ? "Human review" : "Processing template"}</span>
-                    <h2>{selectedRegistration.name ?? selectedRegistration.fileName}</h2>
+                    <h2>{getFormType(selectedRegistration.formTypeId).label} · {regions.length} fields · {lowConfidenceCount} need attention</h2>
                     <p>{getFormType(selectedRegistration.formTypeId).label} · {selectedRegistration.id} · {regions.length} regions</p>
                   </div>
                   <span className={`mini-status ${statusClass(selectedRegistration.status)}`}>{selectedRegistration.status}</span>
                 </div>
                 <div className="editor-save-state">
                   {reviewable && <span>{dirty ? "Unsaved changes" : savedAt ? `Saved ${humanTime(savedAt)}` : "Draft loaded"}</span>}
+                  <button className="details-toggle" type="button" onClick={() => setShowTemplateDetails((value) => !value)} aria-expanded={showTemplateDetails}>
+                    Template details {showTemplateDetails ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  </button>
                   <button className="button secondary" type="button" disabled={!dirty || saving || !reviewable} onClick={saveDraft}>
                     {saving ? <Loader2 size={16} /> : <Save size={16} />} Save draft
                   </button>
                   <button className="button primary" type="button" disabled={!reviewable || validationIssues.length > 0 || saving} onClick={approveDraft}>
                     <CheckCircle2 size={16} /> Approve template
                   </button>
+                  {reviewable && validationIssues.length > 0 && <small className="approve-hint">Resolve {validationIssues.length} issue{validationIssues.length === 1 ? "" : "s"} to approve</small>}
                 </div>
               </div>
 
-              <section className="template-metadata-card">
+              <section className="template-metadata-card template-details-drawer" hidden={!showTemplateDetails}>
                 <label><span>Form name</span><input value={metadataName} maxLength={160} disabled={!manageable} onChange={(event) => setMetadataName(event.target.value)} /></label>
                 <label className="metadata-description"><span>Description</span><textarea value={metadataDescription} maxLength={2000} disabled={!manageable} onChange={(event) => setMetadataDescription(event.target.value)} /></label>
                 <label><span>Category</span><select value={metadataCategoryId} disabled={!manageable} onChange={(event) => setMetadataCategoryId(event.target.value)}>{formTypes.map((category) => <option value={category.id} key={category.id}>{category.name ?? category.label}</option>)}</select></label>
@@ -508,12 +566,12 @@ export default function TemplateWorkspace({
                 <button className="button text-button danger-text" type="button" disabled={!manageable} onClick={removeForm}><Trash2 size={15} /> Remove form</button>
               </section>
 
-              <TemplateProgress registration={selectedRegistration} />
+              <div className="compact-progress"><span>{readOnly ? "Approved" : "Review stage"}</span><strong>{readOnly ? "Template ready to use" : (selectedRegistration.progress?.stage ?? "human_review").replace(/_/g, " ")}</strong></div>
 
               {!hasDraft ? (
                 <RegistrationState registration={selectedRegistration} onRefresh={() => refreshRegistration(selectedRegistration.id)} />
               ) : (<>
-              <DraftWarnings registration={selectedRegistration} serverErrors={serverValidationErrors} />
+              <ReviewIssueSummary issues={reviewMessages} issueCount={lowConfidenceCount} open={showIssues} onToggle={() => setShowIssues((value) => !value)} />
               <div className="editor-toolbar">
                 {draftPages.length > 1 && (
                   <div className="tool-group page-tools" aria-label="Template pages">
@@ -546,28 +604,35 @@ export default function TemplateWorkspace({
                 </div>
               </div>
 
-              <div className="editor-workspace">
+              <div className={`editor-workspace ${inspectorOpen && selectedRegion ? "inspector-open" : "inspector-closed"}`}>
                 <aside className="field-region-list">
                   <div className="region-list-heading">
                     <div><strong>Detected fields</strong><small>{lowConfidenceCount} need attention</small></div>
                   </div>
+                  <div className="region-filter-tabs" role="tablist" aria-label="Detected field filters">
+                    <button className={fieldFilter === "all" ? "active" : ""} type="button" onClick={() => setFieldFilter("all")}>All {visibleRegions.length}</button>
+                    <button className={fieldFilter === "needs-review" ? "active" : ""} type="button" onClick={() => setFieldFilter("needs-review")}>Needs review {lowConfidenceCount}</button>
+                  </div>
                   <div className="region-scroll">
-                    {visibleRegions.map((region, index) => {
+                    {displayedRegions.map((region, index) => {
                       const issues = validationIssues.filter((issue) => issue.regionId === region.id);
+                      const needsReview = issues.length > 0 || Number(region.confidence) < 0.75;
                       return (
                         <button
-                          className={`region-list-item ${region.id === selectedRegionId ? "active" : ""} ${issues.length ? "has-issue" : ""} ${region.enabled === false ? "disabled" : ""}`}
+                          id={`template-field-${region.id}`}
+                          className={`region-list-item ${region.id === selectedRegionId ? "active" : ""} ${needsReview ? "has-issue" : ""} ${region.enabled === false ? "disabled" : ""}`}
                           type="button"
                           key={region.id}
-                          onClick={() => { setSelectedRegionId(region.id); setTool("select"); }}
+                          onClick={() => selectRegion(region.id)}
                         >
                           <GripVertical size={14} />
                           <span className="region-index">{index + 1}</span>
-                          <span><strong>{region.label}</strong><small>{region.key}</small></span>
-                          {issues.length ? <AlertCircle size={15} /> : <span className={`confidence-dot ${region.confidence < 0.75 ? "low" : ""}`}>{percent(region.confidence)}</span>}
+                          <span><strong>{humanFieldName(region)}</strong><small>{region.key || region.type}</small></span>
+                          {needsReview ? <span className="field-status review">Needs review</span> : <span className="field-status ready"><Check size={13} /> Ready</span>}
                         </button>
                       );
                     })}
+                    {!displayedRegions.length && <div className="region-list-empty">No fields need review on this page.</div>}
                   </div>
                   <div className="add-region-row authoritative-note">Geometry is owned by PP-DocLayoutV3</div>
                 </aside>
@@ -580,7 +645,7 @@ export default function TemplateWorkspace({
                     <TemplateCanvas
                       regions={visibleRegions}
                       selectedRegionId={selectedRegionId}
-                      setSelectedRegionId={setSelectedRegionId}
+                      onSelectRegion={selectRegion}
                       commitRegions={commitVisibleRegions}
                       tool={tool}
                       zoom={zoom}
@@ -593,13 +658,15 @@ export default function TemplateWorkspace({
                   </div>
                 </section>
 
-                <FieldInspector
+                {inspectorOpen && selectedRegion && <FieldInspector
                   region={selectedRegion}
                   issues={validationIssues.filter((issue) => issue.regionId === selectedRegionId)}
                   readOnly={readOnly || !reviewable}
                   onChange={(changes) => updateRegion(selectedRegionId, changes)}
                   onDelete={() => deleteRegion()}
-                />
+                  onClose={() => { setSelectedRegionId(""); setInspectorOpen(false); }}
+                  onConfirm={() => confirmRegion(selectedRegionId)}
+                />}
               </div>
               </>)}
             </>
@@ -664,26 +731,25 @@ function RegistrationState({ registration, onRefresh }) {
   );
 }
 
-function DraftWarnings({ registration, serverErrors }) {
-  const warnings = registration.draft?.warnings ?? [];
-  if (!warnings.length && !serverErrors.length) return null;
+function ReviewIssueSummary({ issues, issueCount, open, onToggle }) {
+  if (!issueCount && !issues.length) return null;
   return (
-    <div className="draft-warning-panel">
-      <div><AlertCircle size={17} /><strong>{serverErrors.length ? "Approval is blocked" : "Review notes"}</strong></div>
-      {serverErrors.map((error) => <p key={error}>{error}</p>)}
-      {warnings.map((warning, index) => (
-        <p key={typeof warning === "string" ? warning : `${warning.code}-${index}`}>
-          {typeof warning === "string" ? warning : `${warning.code}: ${warning.message}`}
-        </p>
-      ))}
-    </div>
+    <section className={`review-issue-summary ${open ? "open" : ""}`}>
+      <button type="button" onClick={onToggle} aria-expanded={open}>
+        <span><AlertCircle size={16} /> {issueCount} field{issueCount === 1 ? "" : "s"} need attention</span>
+        <span>View issues {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}</span>
+      </button>
+      {open && <div className="review-issue-details">
+        {issues.length ? issues.map((issue, index) => <div key={`${issue.title}-${index}`}><strong>{issue.title}</strong><p>{issue.message}</p>{issue.technical && <small>{issue.technical}</small>}</div>) : <p>Review the highlighted fields before approving this template.</p>}
+      </div>}
+    </section>
   );
 }
 
 function TemplateCanvas({
   regions,
   selectedRegionId,
-  setSelectedRegionId,
+  onSelectRegion,
   commitRegions,
   tool,
   zoom,
@@ -717,7 +783,7 @@ function TemplateCanvas({
 
   function beginMove(event, region) {
     event.stopPropagation();
-    setSelectedRegionId(region.id);
+    onSelectRegion(region.id);
     if (tool !== "select" || readOnly) return;
     interaction.current = { kind: "move", start: eventPoint(event), region: { ...region } };
     svgRef.current.setPointerCapture(event.pointerId);
@@ -798,7 +864,7 @@ function TemplateCanvas({
           onPointerMove={handlePointerMove}
           onPointerUp={endInteraction}
           onPointerCancel={endInteraction}
-          onClick={(event) => { if (event.target === svgRef.current && tool === "select") setSelectedRegionId(""); }}
+          onClick={(event) => { if (event.target === svgRef.current && tool === "select") onSelectRegion(""); }}
           aria-label="Template region editor"
         >
           {regions.map((region, index) => {
@@ -808,7 +874,7 @@ function TemplateCanvas({
             const width = region.width * pageWidth;
             const height = region.height * pageHeight;
             return (
-              <g className={`region-box ${selected ? "selected" : ""} ${region.confidence < 0.75 ? "low" : ""} ${region.enabled === false ? "disabled" : ""}`} key={region.id}>
+              <g id={`template-region-${region.id}`} className={`region-box ${selected ? "selected" : ""} ${region.confidence < 0.75 ? "low" : ""} ${region.enabled === false ? "disabled" : ""}`} key={region.id}>
                 <rect x={x} y={y} width={width} height={height} rx="3" onPointerDown={(event) => beginMove(event, region)} />
                 <text x={x + 6} y={Math.max(14, y - 7)}>{index + 1}. {region.label}</text>
                 {selected && !readOnly && [
@@ -858,22 +924,12 @@ function TemplatePaperMock({ title }) {
   );
 }
 
-function FieldInspector({ region, issues, readOnly, onChange, onDelete }) {
-  if (!region) {
-    return (
-      <aside className="field-inspector empty">
-        <span><MousePointer2 size={22} /></span>
-        <strong>Select a field</strong>
-        <p>Choose a region on the document or from the detected-fields list.</p>
-      </aside>
-    );
-  }
-
+function FieldInspector({ region, issues, readOnly, onChange, onDelete, onClose, onConfirm }) {
   return (
     <aside className="field-inspector">
       <div className="inspector-heading">
         <div><span className="section-label">Field properties</span><h3>{region.label}</h3></div>
-        <span className={`confidence-score ${region.confidence < 0.75 ? "low" : ""}`}>{percent(region.confidence)}</span>
+        <div className="inspector-heading-actions"><span className={`confidence-score ${region.confidence < 0.75 ? "low" : ""}`}>{percent(region.confidence)}</span><button className="inspector-close" type="button" onClick={onClose} aria-label="Close field details"><X size={16} /></button></div>
       </div>
 
       {issues.length > 0 && (
@@ -897,7 +953,7 @@ function FieldInspector({ region, issues, readOnly, onChange, onDelete }) {
         <div className="review-flags-card">
           <strong>Model review flags</strong>
           {region.reviewFlags.map((flag) => <p key={flag}>{flag}</p>)}
-          {!readOnly && <button className="button secondary" type="button" onClick={() => onChange({ reviewFlags: [] })}><Check size={14} /> Mark reviewed</button>}
+          {!readOnly && <button className="button secondary" type="button" onClick={onConfirm}><Check size={14} /> Confirm and next issue</button>}
         </div>
       )}
 

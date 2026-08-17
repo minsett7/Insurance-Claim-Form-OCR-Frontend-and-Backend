@@ -2818,6 +2818,180 @@ tbody tr.selected {
   font-weight: 750;
 }
 
+/* Focused template human-review workspace */
+.compact-review-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  min-height: 64px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.compact-review-toolbar .editor-title h2 {
+  max-width: none;
+  font-size: 0.94rem;
+}
+
+.details-toggle,
+.inspector-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.details-toggle { min-height: 34px; padding: 6px 8px; }
+.details-toggle:hover,
+.inspector-close:hover { background: var(--surface-muted); color: var(--text); }
+
+.approve-hint {
+  max-width: 142px;
+  color: var(--warning);
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.template-details-drawer {
+  box-shadow: inset 0 1px var(--line), 0 8px 18px rgba(16, 24, 40, 0.06);
+}
+
+.compact-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31px;
+  border-bottom: 1px solid var(--line);
+  padding: 5px 18px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-transform: capitalize;
+}
+
+.compact-progress strong { color: var(--text); }
+
+.review-issue-summary {
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--warning-soft) 52%, var(--surface));
+}
+
+.review-issue-summary > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 42px;
+  border: 0;
+  padding: 8px 16px;
+  background: transparent;
+  color: var(--warning);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.review-issue-summary > button span { display: inline-flex; align-items: center; gap: 6px; }
+
+.review-issue-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 20%, var(--line));
+  padding: 10px 16px 12px;
+}
+
+.review-issue-details > div {
+  border-left: 3px solid var(--warning);
+  padding: 4px 0 4px 9px;
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.review-issue-details p { margin: 3px 0; color: var(--muted); }
+.review-issue-details small { color: var(--warning); font-family: Consolas, monospace; font-size: 0.63rem; }
+
+.editor-workspace {
+  grid-template-columns: 240px minmax(420px, 1fr) 304px;
+  min-height: min(720px, calc(100vh - 206px));
+}
+
+.editor-workspace.inspector-closed { grid-template-columns: 240px minmax(420px, 1fr); }
+
+.field-region-list { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+
+.region-filter-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 9px;
+}
+
+.region-filter-tabs button {
+  flex: 1;
+  min-height: 29px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.65rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.region-filter-tabs button.active { background: var(--brand-soft); color: var(--brand-strong); }
+
+.region-scroll { max-height: none; }
+
+.region-list-item { min-height: 62px; padding: 9px; }
+.region-list-item.active { box-shadow: inset 3px 0 var(--brand); }
+.region-list-item.has-issue:not(.active) { background: color-mix(in srgb, var(--warning-soft) 36%, transparent); }
+
+.field-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  max-width: 76px;
+  font-size: 0.58rem;
+  font-weight: 850;
+  text-align: right;
+}
+
+.field-status.review { color: var(--warning); }
+.field-status.ready { color: var(--success); }
+.region-list-empty { padding: 22px 14px; color: var(--muted); font-size: 0.72rem; text-align: center; }
+
+.template-canvas-area { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.canvas-scroll { height: auto; min-height: 540px; padding: 28px; }
+
+.region-box rect { fill: rgba(49, 95, 196, 0.035); stroke: rgba(49, 95, 196, 0.52); stroke-width: 1.4; }
+.region-box text { display: none; }
+.region-box.low rect { fill: rgba(181, 71, 67, 0.04); stroke: rgba(181, 71, 67, 0.62); }
+.region-box.selected rect { fill: rgba(49, 95, 196, 0.17); stroke: var(--brand); stroke-width: 3; }
+.region-box.selected text { display: block; }
+
+.field-inspector { overflow: auto; padding: 16px; }
+.inspector-heading-actions { display: flex; align-items: center; gap: 6px; }
+.inspector-close { width: 30px; height: 30px; }
+
+@media (max-width: 1480px) {
+  .editor-workspace { grid-template-columns: 220px minmax(360px, 1fr) 280px; }
+  .editor-workspace.inspector-closed { grid-template-columns: 220px minmax(360px, 1fr); }
+}
+
 /* Completed document intake and OCR review */
 .document-page-header {
   display: flex;
