@@ -79,7 +79,8 @@ export function createRegion(key, index = 0, geometry = null) {
     width,
     height,
     enabled: true,
-    reviewFlags: [],
+    reviewRequired: false,
+    reviewReasons: [],
     sourceRegionIds: [],
     backendRegion: null,
   };
@@ -93,8 +94,15 @@ export function createBlankRegion(geometry, index = 0) {
   return createRegion(`newField${index + 1}`, index, geometry);
 }
 
+function legacyReviewReasons(region) {
+  return (region.review_flags ?? []).filter((reason) => (
+    !/^source=(?!geometry_fallback$)|^batch=|^model_decision=|^model_note=/.test(String(reason))
+  ));
+}
+
 export function draftRegionToEditor(region) {
   const bbox = region.bbox ?? {};
+  const legacyReasons = legacyReviewReasons(region);
   return {
     id: region.id,
     page: Number(region.page ?? 1),
@@ -111,7 +119,8 @@ export function draftRegionToEditor(region) {
     width: Number(bbox.width ?? 0),
     height: Number(bbox.height ?? 0),
     enabled: region.enabled !== false,
-    reviewFlags: [...(region.review_flags ?? [])],
+    reviewRequired: typeof region.review_required === "boolean" ? region.review_required : legacyReasons.length > 0,
+    reviewReasons: [...(region.review_reasons ?? legacyReasons)],
     sourceRegionIds: [...(region.source_region_ids ?? [])],
     regionType: region.region_type ?? null,
     relationship: region.relationship ?? null,
@@ -121,8 +130,10 @@ export function draftRegionToEditor(region) {
 }
 
 export function editorRegionToDraft(region) {
+  const backendRegion = { ...(region.backendRegion ?? {}) };
+  delete backendRegion.review_flags;
   return {
-    ...(region.backendRegion ?? {}),
+    ...backendRegion,
     id: region.id,
     field_id: region.fieldId ?? region.backendRegion?.field_id ?? region.id,
     key: region.key,
@@ -134,7 +145,8 @@ export function editorRegionToDraft(region) {
     confidence: Number(region.confidence),
     bbox: { x: region.x, y: region.y, width: region.width, height: region.height },
     enabled: region.enabled !== false,
-    review_flags: [...(region.reviewFlags ?? [])],
+    review_required: Boolean(region.reviewRequired),
+    review_reasons: [...(region.reviewReasons ?? [])],
     source_region_ids: [...(region.sourceRegionIds ?? [])],
   };
 }
@@ -158,6 +170,12 @@ export function saveRegions(registrationId, regions) {
   }
 }
 
+export function acceptAllReviewRequirements(regions) {
+  return regions.map((region) => (
+    region.reviewRequired ? { ...region, reviewRequired: false, reviewReasons: [] } : region
+  ));
+}
+
 export function validateRegions(regions) {
   const issues = [];
   const keys = new Map();
@@ -170,8 +188,10 @@ export function validateRegions(regions) {
     if (!String(region.key).trim()) issues.push({ regionId: region.id, message: "Field key is missing" });
     if (region.key && !/^[a-z][a-z0-9_]*$/.test(region.key)) issues.push({ regionId: region.id, message: "Field key must use lower_snake_case" });
     if (!EXTRACTION_MODES.some((mode) => mode.value === region.extractionMode)) issues.push({ regionId: region.id, message: "Choose a supported extraction method" });
-    (region.reviewFlags ?? []).forEach((flag) => issues.push({ regionId: region.id, message: `Review required: ${flag}` }));
-    if (region.width < 0.025 || region.height < 0.012) issues.push({ regionId: region.id, message: "Region is too small" });
+    if (region.reviewRequired) {
+      const reasons = region.reviewReasons?.length ? region.reviewReasons : ["Human review is required"];
+      reasons.forEach((reason) => issues.push({ regionId: region.id, message: `Review required: ${reason}` }));
+    }
     if (region.x < 0 || region.y < 0 || region.x + region.width > 1 || region.y + region.height > 1) {
       issues.push({ regionId: region.id, message: "Region is outside the page" });
     }

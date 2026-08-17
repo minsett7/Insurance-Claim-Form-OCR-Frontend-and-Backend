@@ -39,6 +39,7 @@ import { TEMPLATE_PIPELINE } from "./productModel";
 import {
   EXTRACTION_MODES,
   FIELD_TYPES,
+  acceptAllReviewRequirements,
   createDetectedRegions,
   editorRegionToDraft,
   loadRegions,
@@ -47,6 +48,7 @@ import {
 
 const SUPPORTED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"];
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
+const TEMPLATE_REVIEW_CONFIDENCE = 0.8;
 
 function supportedFile(file) {
   const name = file.name.toLowerCase();
@@ -140,8 +142,16 @@ export default function TemplateWorkspace({
   const visibleRegions = regions.filter((region) => Number(region.page ?? 1) === selectedPageNumber);
   const selectedRegion = visibleRegions.find((region) => region.id === selectedRegionId) ?? null;
   const validationIssues = useMemo(() => validateRegions(regions), [regions]);
+  const blockingValidationIssues = useMemo(
+    () => validationIssues.filter((issue) => !issue.message.startsWith("Review required:")),
+    [validationIssues],
+  );
+  const flaggedRegionCount = useMemo(
+    () => regions.filter((region) => region.enabled !== false && region.reviewRequired).length,
+    [regions],
+  );
   const regionIssueIds = useMemo(() => new Set(validationIssues.map((issue) => issue.regionId).filter(Boolean)), [validationIssues]);
-  const attentionRegions = visibleRegions.filter((region) => regionIssueIds.has(region.id) || Number(region.confidence) < 0.75);
+  const attentionRegions = visibleRegions.filter((region) => regionIssueIds.has(region.id) || Number(region.confidence) < TEMPLATE_REVIEW_CONFIDENCE);
   const displayedRegions = fieldFilter === "needs-review" ? attentionRegions : visibleRegions;
   const lowConfidenceCount = attentionRegions.length;
   const reviewMessages = [...serverValidationErrors, ...(selectedRegistration?.draft?.warnings ?? [])].map(describeReviewMessage);
@@ -233,7 +243,7 @@ export default function TemplateWorkspace({
   }
 
   function confirmRegion(id) {
-    updateRegion(id, { reviewFlags: [] });
+    updateRegion(id, { reviewRequired: false, reviewReasons: [] });
     const next = attentionRegions.find((region) => region.id !== id);
     if (next) selectRegion(next.id);
     else {
@@ -244,7 +254,7 @@ export default function TemplateWorkspace({
 
   function deleteRegion(id = selectedRegionId) {
     if (!id || readOnly || !reviewable) return;
-    updateRegion(id, { enabled: false, reviewFlags: [] });
+    updateRegion(id, { enabled: false, reviewRequired: false, reviewReasons: [] });
   }
 
   function duplicateRegion() {
@@ -379,13 +389,13 @@ export default function TemplateWorkspace({
     }
   }
 
-  async function saveDraft() {
+  async function saveDraft(regionsToSave = regions) {
     if (!selectedRegistration || readOnly || !reviewable) return null;
     setSaving(true);
     try {
       const saved = await saveTemplateRegistrationDraft(selectedRegistration.id, {
         revision: selectedRegistration.draftRevision,
-        regions: regions.map(editorRegionToDraft),
+        regions: regionsToSave.map(editorRegionToDraft),
       });
       await refreshRegistration(selectedRegistration.id, { quiet: true });
       setDirty(false);
@@ -400,8 +410,10 @@ export default function TemplateWorkspace({
   }
 
   async function approveDraft() {
-    if (!selectedRegistration || validationIssues.length || readOnly || !reviewable) return;
-    const saved = await saveDraft();
+    if (!selectedRegistration || blockingValidationIssues.length || readOnly || !reviewable) return;
+    const regionsForApproval = acceptAllReviewRequirements(regions);
+    if (regionsForApproval !== regions) commitRegions(regionsForApproval);
+    const saved = await saveDraft(regionsForApproval);
     if (!saved) return;
     const validation = await validateTemplateRegistration(selectedRegistration.id);
     setServerValidationErrors(validation.errors ?? []);
@@ -551,10 +563,11 @@ export default function TemplateWorkspace({
                   <button className="button secondary" type="button" disabled={!dirty || saving || !reviewable} onClick={saveDraft}>
                     {saving ? <Loader2 size={16} /> : <Save size={16} />} Save draft
                   </button>
-                  <button className="button primary" type="button" disabled={!reviewable || validationIssues.length > 0 || saving} onClick={approveDraft}>
-                    <CheckCircle2 size={16} /> Approve template
+                  <button className="button primary" type="button" disabled={!reviewable || blockingValidationIssues.length > 0 || saving} onClick={approveDraft}>
+                    <CheckCircle2 size={16} /> Approve all fields
                   </button>
-                  {reviewable && validationIssues.length > 0 && <small className="approve-hint">Resolve {validationIssues.length} issue{validationIssues.length === 1 ? "" : "s"} to approve</small>}
+                  {reviewable && flaggedRegionCount > 0 && !blockingValidationIssues.length && <small className="approve-hint">Approving accepts all {flaggedRegionCount} AI review flag{flaggedRegionCount === 1 ? "" : "s"}.</small>}
+                  {reviewable && blockingValidationIssues.length > 0 && <small className="approve-hint">Resolve {blockingValidationIssues.length} structural issue{blockingValidationIssues.length === 1 ? "" : "s"} to approve.</small>}
                 </div>
               </div>
 
@@ -616,7 +629,7 @@ export default function TemplateWorkspace({
                   <div className="region-scroll">
                     {displayedRegions.map((region, index) => {
                       const issues = validationIssues.filter((issue) => issue.regionId === region.id);
-                      const needsReview = issues.length > 0 || Number(region.confidence) < 0.75;
+                      const needsReview = issues.length > 0 || Number(region.confidence) < TEMPLATE_REVIEW_CONFIDENCE;
                       return (
                         <button
                           id={`template-field-${region.id}`}
@@ -874,7 +887,7 @@ function TemplateCanvas({
             const width = region.width * pageWidth;
             const height = region.height * pageHeight;
             return (
-              <g id={`template-region-${region.id}`} className={`region-box ${selected ? "selected" : ""} ${region.confidence < 0.75 ? "low" : ""} ${region.enabled === false ? "disabled" : ""}`} key={region.id}>
+              <g id={`template-region-${region.id}`} className={`region-box ${selected ? "selected" : ""} ${region.confidence < TEMPLATE_REVIEW_CONFIDENCE ? "low" : ""} ${region.enabled === false ? "disabled" : ""}`} key={region.id}>
                 <rect x={x} y={y} width={width} height={height} rx="3" onPointerDown={(event) => beginMove(event, region)} />
                 <text x={x + 6} y={Math.max(14, y - 7)}>{index + 1}. {region.label}</text>
                 {selected && !readOnly && [
@@ -929,7 +942,7 @@ function FieldInspector({ region, issues, readOnly, onChange, onDelete, onClose,
     <aside className="field-inspector">
       <div className="inspector-heading">
         <div><span className="section-label">Field properties</span><h3>{region.label}</h3></div>
-        <div className="inspector-heading-actions"><span className={`confidence-score ${region.confidence < 0.75 ? "low" : ""}`}>{percent(region.confidence)}</span><button className="inspector-close" type="button" onClick={onClose} aria-label="Close field details"><X size={16} /></button></div>
+        <div className="inspector-heading-actions"><span className={`confidence-score ${region.confidence < TEMPLATE_REVIEW_CONFIDENCE ? "low" : ""}`}>{percent(region.confidence)}</span><button className="inspector-close" type="button" onClick={onClose} aria-label="Close field details"><X size={16} /></button></div>
       </div>
 
       {issues.length > 0 && (
@@ -949,10 +962,10 @@ function FieldInspector({ region, issues, readOnly, onChange, onDelete, onClose,
         <label className="required-toggle"><input type="checkbox" checked={region.required} disabled={readOnly} onChange={(event) => onChange({ required: event.target.checked })} /><span>Required field</span></label>
       </div>
 
-      {(region.reviewFlags ?? []).length > 0 && (
+      {region.reviewRequired && (
         <div className="review-flags-card">
-          <strong>Model review flags</strong>
-          {region.reviewFlags.map((flag) => <p key={flag}>{flag}</p>)}
+          <strong>Review required</strong>
+          {(region.reviewReasons?.length ? region.reviewReasons : ["Human review is required"]).map((reason) => <p key={reason}>{reason}</p>)}
           {!readOnly && <button className="button secondary" type="button" onClick={onConfirm}><Check size={14} /> Confirm and next issue</button>}
         </div>
       )}
