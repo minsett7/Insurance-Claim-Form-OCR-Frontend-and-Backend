@@ -154,6 +154,25 @@ function confidenceByField(document) {
   return scores;
 }
 
+function pageByField(document) {
+  const pages = {};
+  Object.entries(document.processed?.fields ?? {}).forEach(([apiKey, field]) => {
+    pages[apiFieldToUi(apiKey)] = Number(field?.page ?? 1);
+  });
+  return pages;
+}
+
+function metadataByField(document) {
+  const metadata = {};
+  Object.entries(document.processed?.fields ?? {}).forEach(([apiKey, field]) => {
+    metadata[apiFieldToUi(apiKey)] = {
+      label: field?.label ?? apiKey.replace(/_/g, " "),
+      type: field?.field_type === "table" ? "textarea" : "text",
+    };
+  });
+  return metadata;
+}
+
 export function correctionPayloadFromExtracted(extracted) {
   const fields = {};
   Object.entries(extracted ?? {}).forEach(([uiKey, value]) => {
@@ -235,6 +254,14 @@ export function adaptDocument(document, formTypes = []) {
     pipelineStage: document.status === "processing" ? 4 : 7,
     extracted: processedToExtracted(document, formTypes),
     confidenceByField: confidenceByField(document),
+    pageByField: pageByField(document),
+    fieldMetadata: metadataByField(document),
+    pageAlignmentScores: document.processed?.summary?.page_alignment_scores ?? {},
+    sourceUrl: `${API_BASE_URL}/api/v1/documents/${encodeURIComponent(document.id)}/source`,
+    alignedPageBaseUrl: document.processed?.summary?.aligned_page_count && document.downstream_ids?.document_job_id
+      ? `${API_BASE_URL}/api/v1/documents/${encodeURIComponent(document.id)}/pages`
+      : null,
+    templateMatch: document.template_match ?? null,
     auditTrail: [
       { at: document.created_at ?? "", action: "Uploaded to backend" },
       ...(document.processed ? [{ at: document.updated_at ?? "", action: "Post-processing completed" }] : []),
@@ -380,10 +407,27 @@ export async function updateTemplateRegistrationFields(registrationId, fields) {
 }
 
 export async function uploadCompletedDocuments(templateId, files) {
-  return request(`/api/documents?template_id=${encodeURIComponent(templateId)}&process_immediately=true`, {
+  const templateQuery = templateId ? `&template_id=${encodeURIComponent(templateId)}` : "";
+  return request(`/api/documents?process_immediately=true${templateQuery}`, {
     method: "POST",
     body: fileFormData(files),
   });
+}
+
+export async function fetchTemplateLayout(templateId) {
+  return request(`/api/v1/templates/${encodeURIComponent(templateId)}/layout`);
+}
+
+export async function overrideDocumentTemplate(documentId, templateId) {
+  return request(`/api/v1/documents/${encodeURIComponent(documentId)}/template-match`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ template_id: templateId, reason: "Selected by reviewer" }),
+  });
+}
+
+export async function reprocessDocument(documentId) {
+  return request(`/api/v1/documents/${encodeURIComponent(documentId)}/reprocess`, { method: "POST" });
 }
 
 export async function saveDocumentFields(documentId, extracted) {

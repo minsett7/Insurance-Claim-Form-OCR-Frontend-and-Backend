@@ -3655,6 +3655,7 @@ tbody tr.selected {
 }
 
 .review-document-paper > img,
+.review-document-paper > iframe,
 .review-document-paper > svg,
 .completed-form-mock {
   position: absolute;
@@ -3664,7 +3665,19 @@ tbody tr.selected {
 }
 
 .review-document-paper > img { object-fit: fill; }
+.review-document-paper > iframe { border: 0; z-index: 1; }
 .review-document-paper > svg { z-index: 3; }
+
+.document-preview-unavailable {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--surface-muted);
+}
 
 .review-document-paper svg g { cursor: pointer; }
 
