@@ -761,6 +761,7 @@ function TemplateCanvas({
 }) {
   const svgRef = useRef(null);
   const interaction = useRef(null);
+  const pointerStartedOnRegion = useRef(false);
   const [draftBox, setDraftBox] = useState(null);
   const pageWidth = Number(page?.width ?? 1000);
   const pageHeight = Number(page?.height ?? 1414);
@@ -774,7 +775,9 @@ function TemplateCanvas({
   }
 
   function beginDraw(event) {
-    if (tool !== "draw" || readOnly || event.target !== svgRef.current) return;
+    if (event.target !== svgRef.current) return;
+    pointerStartedOnRegion.current = false;
+    if (tool !== "draw" || readOnly) return;
     const point = eventPoint(event);
     interaction.current = { kind: "draw", start: point };
     setDraftBox({ x: point.x, y: point.y, width: 0, height: 0 });
@@ -783,6 +786,7 @@ function TemplateCanvas({
 
   function beginMove(event, region) {
     event.stopPropagation();
+    pointerStartedOnRegion.current = true;
     onSelectRegion(region.id);
     if (tool !== "select" || readOnly) return;
     interaction.current = { kind: "move", start: eventPoint(event), region: { ...region } };
@@ -791,6 +795,7 @@ function TemplateCanvas({
 
   function beginResize(event, region, corner) {
     event.stopPropagation();
+    pointerStartedOnRegion.current = true;
     if (readOnly) return;
     interaction.current = { kind: "resize", corner, start: eventPoint(event), region: { ...region } };
     svgRef.current.setPointerCapture(event.pointerId);
@@ -864,7 +869,13 @@ function TemplateCanvas({
           onPointerMove={handlePointerMove}
           onPointerUp={endInteraction}
           onPointerCancel={endInteraction}
-          onClick={(event) => { if (event.target === svgRef.current && tool === "select") onSelectRegion(""); }}
+          onClick={(event) => {
+            if (pointerStartedOnRegion.current) {
+              pointerStartedOnRegion.current = false;
+              return;
+            }
+            if (event.target === svgRef.current && tool === "select") onSelectRegion("");
+          }}
           aria-label="Template region editor"
         >
           {regions.map((region, index) => {
